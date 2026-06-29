@@ -524,7 +524,7 @@ function CommandCenter({
     {
       title: "Candidate review",
       description: "CV + role",
-      result: metrics.cvReady > 0 ? `${metrics.cvReady} analysed` : "Not started",
+      result: metrics.cvReady > 0 ? `${metrics.cvReady} analysed` : "",
       detail: candidates[0]?.decision ?? "Score a candidate against a job target.",
       tone: "info" as Tone,
       icon: FileText,
@@ -533,7 +533,7 @@ function CommandCenter({
     {
       title: "CRM analysis",
       description: "CRM CSV",
-      result: metrics.dealsNeedingAction > 0 ? `${metrics.dealsNeedingAction} actions` : "Not started",
+      result: metrics.dealsNeedingAction > 0 ? `${metrics.dealsNeedingAction} actions` : "",
       detail: deals[0]?.action ?? "Find stalled deals and owner follow-ups.",
       tone: "warning" as Tone,
       icon: Database,
@@ -542,7 +542,7 @@ function CommandCenter({
     {
       title: "Lead qualification",
       description: "ICP + source list",
-      result: metrics.prospectsToReview > 0 ? `${metrics.prospectsReady} ready` : "Not started",
+      result: metrics.prospectsToReview > 0 ? `${metrics.prospectsReady} ready` : "",
       detail: prospects[0]?.nextAction ?? "Score prospects before CRM capture.",
       tone: "success" as Tone,
       icon: Target,
@@ -644,7 +644,11 @@ function WorkstreamRow({
   onOpen: () => void;
 }) {
   return (
-    <button className={`workstream-row workstream-row-${tone}`} type="button" onClick={onOpen}>
+    <button
+      className={`workstream-row workstream-row-${tone} ${result ? "" : "workstream-row-empty"}`}
+      type="button"
+      onClick={onOpen}
+    >
       <div className="workflow-icon">
         <Icon size={20} aria-hidden="true" />
       </div>
@@ -655,9 +659,11 @@ function WorkstreamRow({
         </span>
         <small>{detail}</small>
       </div>
-      <div className="workstream-meta">
-        <small>{result}</small>
-      </div>
+      {result ? (
+        <div className="workstream-meta">
+          <small>{result}</small>
+        </div>
+      ) : null}
     </button>
   );
 }
