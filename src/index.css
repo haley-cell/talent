@@ -1033,6 +1033,80 @@ textarea:focus-visible {
   line-height: 1.7;
 }
 
+.argument-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  border: 1px solid rgba(37, 95, 77, 0.18);
+  border-radius: 7px;
+  background: rgba(231, 236, 230, 0.4);
+  padding: 14px;
+}
+
+.argument-panel-amber {
+  border-color: rgba(155, 106, 35, 0.22);
+  background: rgba(155, 106, 35, 0.08);
+}
+
+.argument-section {
+  display: grid;
+  gap: 8px;
+}
+
+.argument-section > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.argument-section p,
+.argument-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.argument-list {
+  display: grid;
+  gap: 10px;
+}
+
+.argument-item {
+  display: grid;
+  gap: 4px;
+  border-left: 3px solid rgba(37, 95, 77, 0.28);
+  padding-left: 10px;
+}
+
+.argument-item strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.argument-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.argument-chips span {
+  border: 1px solid rgba(37, 95, 77, 0.18);
+  border-radius: 6px;
+  background: rgba(251, 252, 247, 0.72);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.argument-chips-warning span {
+  border-color: rgba(155, 106, 35, 0.22);
+  color: var(--amber);
+}
+
 .evidence-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

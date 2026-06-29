@@ -10,9 +10,28 @@ Deno.serve(async (request) => {
     const body = await request.json();
     const result = await callModelGateway({
       system:
-        "You are the evidence-labeling layer for a prospect qualification operator. Return only JSON. Do not choose the final fit score by feel: label hard gates, five dimension scores, evidence, reason, missing data, and outreach angle. The server computes fit and routing from your labels. Use only supplied ICP, source text, and manual URL.",
+        `You are the evidence-labeling layer for a prospect qualification operator.
+Return only JSON. Do not choose the final fit score by feel: the server computes fit and routing from your labels.
+
+Your job is not generic lead scoring. Reason like a disciplined outbound and RevOps operator:
+1. Parse the supplied ICP into hard gates, target segments, pains, buying triggers, role authority, timing signals, and required capture fields.
+2. Normalize each prospect from the source text or manual URL. Use only supplied data. Do not invent email addresses, roles, company facts, funding, hiring activity, or intent.
+3. Apply hard gates first: clearly outside ICP, excluded industry, no reachable company/contact path, unsupported identity, or missing source support.
+4. Score five dimensions from evidence: market fit, buying signal, role authority, timing, and data completeness. A high score requires both fit and a concrete reason to act now.
+5. Make the reason business-specific. Tie it to the ICP, the prospect's context, and the most credible source signal.
+6. Write outreachAngle as a short operator note, not marketing copy. It should explain the first useful conversation angle and why that angle fits this prospect.
+7. Preserve uncertainty. Missing or weak evidence should lower dataCompleteness/timing and create missingData items rather than confident claims.
+8. Prepare pipelineWrite only for records a human could review for CRM capture.
+
+Return concise evidence, not hidden chain-of-thought.`,
       user: JSON.stringify(body),
       schemaHint: {
+        icpRead: {
+          targetSegments: ["Segment inferred from ICP"],
+          painSignals: ["Pain or trigger that matters"],
+          disqualifiers: ["Hard gate or excluded fit"],
+          requiredCaptureFields: ["Field needed before CRM capture"],
+        },
         prospects: [
           {
             name: "Prospect",
@@ -28,6 +47,7 @@ Deno.serve(async (request) => {
               timing: 6,
               dataCompleteness: 8,
             },
+            evidence: ["Source-backed signal for this prospect"],
             reason: "Why this matches the ICP",
             missingData: [],
             outreachAngle: "Short angle",
@@ -73,18 +93,25 @@ Deno.serve(async (request) => {
 
     if (insertedProspects.error) throw new Error(insertedProspects.error.message);
 
-    const prospects = (insertedProspects.data ?? []).map((prospect: Record<string, unknown>) => ({
-      id: String(prospect.id),
-      name: String(prospect.name ?? "Contact"),
-      title: String(prospect.title ?? "Decision maker"),
-      company: String(prospect.company),
-      email: String(prospect.email ?? ""),
-      source: String(prospect.source ?? "Prospect source"),
-      fit: Number(prospect.fit ?? 0),
-      status: String(prospect.status ?? "Review"),
-      reason: String(prospect.reason ?? "Scored against supplied ICP."),
-      nextAction: String(prospect.next_action ?? "Review before outreach."),
-    }));
+    const prospects = (insertedProspects.data ?? []).map((prospect: Record<string, unknown>) => {
+      const payload = typeof prospect.crm_capture_payload === "object" && prospect.crm_capture_payload
+        ? prospect.crm_capture_payload as Record<string, unknown>
+        : {};
+      return {
+        id: String(prospect.id),
+        name: String(prospect.name ?? "Contact"),
+        title: String(prospect.title ?? "Decision maker"),
+        company: String(prospect.company),
+        email: String(prospect.email ?? ""),
+        source: String(prospect.source ?? "Prospect source"),
+        fit: Number(prospect.fit ?? 0),
+        status: String(prospect.status ?? "Review"),
+        reason: String(prospect.reason ?? "Scored against supplied ICP."),
+        nextAction: String(prospect.next_action ?? "Review before outreach."),
+        evidence: stringArray(payload.evidence),
+        missingData: stringArray(payload.missingData),
+      };
+    });
 
     const captureReady = prospects.filter((prospect) => prospect.status === "Capture now").length;
     const scoreReceipts = prospectRows.map((prospect) => prospect.crm_capture_payload.scoreReceipt);

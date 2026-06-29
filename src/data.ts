@@ -10,6 +10,24 @@ export type CandidateMatch = {
   evidence: string[];
   gaps: string[];
   tags: string[];
+  roleMission?: {
+    primaryMission?: string;
+    businessOutcomes?: string[];
+    successSignals?: string[];
+  };
+  candidateRead?: {
+    trajectory?: string;
+    strongestRelevantContext?: string;
+    evidenceLimits?: string[];
+  };
+  fitArguments?: Array<{
+    point: string;
+    evidence: string;
+  }>;
+  followUpQuestions?: Array<{
+    question: string;
+    reason: string;
+  }>;
 };
 
 export type Deal = {
@@ -22,6 +40,8 @@ export type Deal = {
   probability: number;
   risk: "High" | "Medium" | "Low";
   action: string;
+  reason?: string;
+  evidence?: string;
 };
 
 export type Prospect = {
@@ -35,6 +55,8 @@ export type Prospect = {
   reason: string;
   nextAction: string;
   email: string;
+  evidence?: string[];
+  missingData?: string[];
 };
 
 export type RunLog = {

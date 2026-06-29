@@ -801,6 +801,7 @@ function CvTool({
                 <Badge tone="info">{confidenceLabel(selectedCandidate.score)}</Badge>
               </div>
               <p className="large-summary">{selectedCandidate.summary}</p>
+              <CandidateArgumentPanel candidate={selectedCandidate} />
               <div className="evidence-grid">
                 <EvidenceList title="Supporting evidence" items={selectedCandidate.evidence} tone="success" />
                 <EvidenceList title="Gaps to review" items={selectedCandidate.gaps} tone="warning" />
@@ -964,6 +965,7 @@ function CrmAnalyzer({
                   <dd>{selectedDeal.probability}%</dd>
                 </div>
               </dl>
+              <DealReasonPanel deal={selectedDeal} />
               <div className="dispatch-note amber-note">
                 <AlertTriangle size={18} aria-hidden="true" />
                 <div>
@@ -1132,6 +1134,7 @@ function ProspectTool({
                 </div>
               </dl>
               <p className="large-summary">{selectedProspect.reason}</p>
+              <ProspectReasonPanel prospect={selectedProspect} />
               <div className="outreach-box">
                 <Mail size={18} aria-hidden="true" />
                 <div>
@@ -1235,6 +1238,123 @@ function ActivityLogs({
           <EmptyState title="No workflow runs yet" description="Run CV, CRM, or prospect analysis to create the first review record." />
         </Card>
       )}
+    </div>
+  );
+}
+
+function CandidateArgumentPanel({ candidate }: { candidate: CandidateMatch }) {
+  const mission = candidate.roleMission;
+  const candidateRead = candidate.candidateRead;
+  const hasMission = Boolean(mission?.primaryMission || mission?.businessOutcomes?.length || mission?.successSignals?.length);
+  const hasCandidateRead = Boolean(candidateRead?.trajectory || candidateRead?.strongestRelevantContext);
+  const hasArguments = Boolean(candidate.fitArguments?.length);
+  const hasQuestions = Boolean(candidate.followUpQuestions?.length);
+
+  if (!hasMission && !hasCandidateRead && !hasArguments && !hasQuestions) return null;
+
+  return (
+    <div className="argument-panel">
+      {hasMission ? (
+        <div className="argument-section">
+          <span>Role mission</span>
+          {mission?.primaryMission ? <p>{mission.primaryMission}</p> : null}
+          <ArgumentChips items={[...(mission?.businessOutcomes ?? []), ...(mission?.successSignals ?? [])]} />
+        </div>
+      ) : null}
+
+      {hasCandidateRead ? (
+        <div className="argument-section">
+          <span>Candidate read</span>
+          {candidateRead?.trajectory ? <p>{candidateRead.trajectory}</p> : null}
+          {candidateRead?.strongestRelevantContext ? <p>{candidateRead.strongestRelevantContext}</p> : null}
+        </div>
+      ) : null}
+
+      {hasArguments ? (
+        <div className="argument-section">
+          <span>Why this makes sense</span>
+          <div className="argument-list">
+            {candidate.fitArguments?.map((item, index) => (
+              <div className="argument-item" key={`${item.point}-${index}`}>
+                <strong>{item.point}</strong>
+                {item.evidence ? <p>{item.evidence}</p> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {hasQuestions ? (
+        <div className="argument-section">
+          <span>What to check next</span>
+          <div className="argument-list">
+            {candidate.followUpQuestions?.map((item, index) => (
+              <div className="argument-item" key={`${item.question}-${index}`}>
+                <strong>{item.question}</strong>
+                {item.reason ? <p>{item.reason}</p> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DealReasonPanel({ deal }: { deal: Deal }) {
+  if (!deal.reason && !deal.evidence) return null;
+
+  return (
+    <div className="argument-panel argument-panel-amber">
+      {deal.reason ? (
+        <div className="argument-section">
+          <span>Why this matters</span>
+          <p>{deal.reason}</p>
+        </div>
+      ) : null}
+      {deal.evidence ? (
+        <div className="argument-section">
+          <span>Signal found</span>
+          <p>{deal.evidence}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProspectReasonPanel({ prospect }: { prospect: Prospect }) {
+  const hasEvidence = Boolean(prospect.evidence?.length);
+  const hasMissingData = Boolean(prospect.missingData?.length);
+
+  if (!hasEvidence && !hasMissingData) return null;
+
+  return (
+    <div className="argument-panel">
+      {hasEvidence ? (
+        <div className="argument-section">
+          <span>Why this lead is worth attention</span>
+          <ArgumentChips items={prospect.evidence ?? []} />
+        </div>
+      ) : null}
+      {hasMissingData ? (
+        <div className="argument-section">
+          <span>Missing before capture</span>
+          <ArgumentChips items={prospect.missingData ?? []} tone="warning" />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ArgumentChips({ items, tone = "default" }: { items: string[]; tone?: "default" | "warning" }) {
+  const cleanItems = items.filter(Boolean).slice(0, 5);
+  if (!cleanItems.length) return null;
+
+  return (
+    <div className={`argument-chips argument-chips-${tone}`}>
+      {cleanItems.map((item) => (
+        <span key={item}>{item}</span>
+      ))}
     </div>
   );
 }

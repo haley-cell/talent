@@ -44,18 +44,25 @@ Deno.serve(async (request) => {
         risk: normalizeRisk(deal.risk),
         action: String(deal.recommended_action ?? "Define next step."),
       })),
-      prospects: (prospectsResult.data ?? []).map((prospect: Record<string, unknown>) => ({
-        id: String(prospect.id),
-        name: String(prospect.name ?? "Contact"),
-        title: String(prospect.title ?? "Decision maker"),
-        company: String(prospect.company ?? "Company"),
-        email: String(prospect.email ?? ""),
-        source: String(prospect.source ?? "Prospect source"),
-        fit: Number(prospect.fit ?? 0),
-        status: String(prospect.status ?? "Review"),
-        reason: String(prospect.reason ?? "Scored against ICP."),
-        nextAction: String(prospect.next_action ?? "Review before outreach."),
-      })),
+      prospects: (prospectsResult.data ?? []).map((prospect: Record<string, unknown>) => {
+        const payload = typeof prospect.crm_capture_payload === "object" && prospect.crm_capture_payload
+          ? prospect.crm_capture_payload as Record<string, unknown>
+          : {};
+        return {
+          id: String(prospect.id),
+          name: String(prospect.name ?? "Contact"),
+          title: String(prospect.title ?? "Decision maker"),
+          company: String(prospect.company ?? "Company"),
+          email: String(prospect.email ?? ""),
+          source: String(prospect.source ?? "Prospect source"),
+          fit: Number(prospect.fit ?? 0),
+          status: String(prospect.status ?? "Review"),
+          reason: String(prospect.reason ?? "Scored against ICP."),
+          nextAction: String(prospect.next_action ?? "Review before outreach."),
+          evidence: stringArray(payload.evidence),
+          missingData: stringArray(payload.missingData),
+        };
+      }),
       runs: (runsResult.data ?? []).map(toRun),
     });
   } catch (error) {
@@ -73,4 +80,8 @@ function normalizeRisk(value: unknown): "High" | "Medium" | "Low" {
 function formatMoney(value: number) {
   if (value >= 1000) return `EUR ${Math.round(value / 1000)}k`;
   return `EUR ${Math.round(value)}`;
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
 }

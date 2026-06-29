@@ -10,7 +10,18 @@ Deno.serve(async (request) => {
     const body = await request.json();
     const result = await callModelGateway({
       system:
-        "You analyze CRM deal rows as a pipeline operator. Return only JSON. Find stalled deals, missing next steps, revenue at risk, concise owner actions, and exact pipeline writes. Use only supplied CRM data. Every priority action must end in a concrete field update or owner next step.",
+        `You are a CRM pipeline operator for recruiting and business development teams.
+Return only JSON. Use only supplied CRM rows. Do not invent companies, owners, activity, probabilities, values, or next steps.
+
+Your job is not summarization. Diagnose the pipeline like a revenue operator:
+1. Normalize what each row represents: company, owner, stage, deal value, probability, last activity, close timing, and next buyer/owner action.
+2. Find operational risk, not generic "bad deals": stale proposal/negotiation, missing next step, passed close date, high value with weak probability, unclear owner accountability, and stage/probability inconsistencies.
+3. Prioritize actions by business impact: stage proximity, value at risk, inactivity age, buyer commitment, and whether a concrete owner action can unblock the deal.
+4. For every priority action, include the evidence from the CRM row, the likely root cause, the owner-facing next action, and the exact pipelineWrite fields.
+5. Keep the recommendations operational and concise. Each action must be executable by a CRM owner today.
+6. Preserve uncertainty. If required columns are missing or ambiguous, mark quality accordingly and recommend the minimum field update needed before acting.
+
+Every priority action must end in a concrete field update or owner next step. Return concise evidence, not hidden chain-of-thought.`,
       user: JSON.stringify(body),
       schemaHint: {
         activePipeline: "EUR 312k",
@@ -25,6 +36,8 @@ Deno.serve(async (request) => {
             lastActivity: "21 days",
             probability: 68,
             risk: "High",
+            rootCause: "Why the deal is operationally stuck or risky",
+            evidence: "CRM row signal that supports this action",
             action: "Recommended next step",
             pipelineWrite: {
               stage: "Proposal",
@@ -66,17 +79,22 @@ Deno.serve(async (request) => {
 
     if (insertedDeals.error) throw new Error(insertedDeals.error.message);
 
-    const deals = (insertedDeals.data ?? []).map((deal: Record<string, unknown>) => ({
-      id: String(deal.id),
-      company: String(deal.company),
-      owner: String(deal.owner ?? "Unassigned"),
-      stage: String(deal.stage ?? "New"),
-      value: formatMoney(Number(deal.value ?? 0)),
-      lastActivity: "See CRM source",
-      probability: Number(deal.probability ?? 50),
-      risk: normalizeRisk(deal.risk),
-      action: String(deal.recommended_action ?? "Define next step."),
-    }));
+    const deals = (insertedDeals.data ?? []).map((deal: Record<string, unknown>, index) => {
+      const action = typeof actions[index] === "object" && actions[index] ? actions[index] as Record<string, unknown> : {};
+      return {
+        id: String(deal.id),
+        company: String(deal.company),
+        owner: String(deal.owner ?? "Unassigned"),
+        stage: String(deal.stage ?? "New"),
+        value: formatMoney(Number(deal.value ?? 0)),
+        lastActivity: "See CRM source",
+        probability: Number(deal.probability ?? 50),
+        risk: normalizeRisk(deal.risk),
+        action: String(deal.recommended_action ?? "Define next step."),
+        reason: stringValue(action.rootCause, ""),
+        evidence: stringValue(action.evidence, ""),
+      };
+    });
 
     const evidence = stringArray(output.evidence);
     const resultSummary = `${deals.filter((deal) => deal.risk !== "Low").length} deals need action`;

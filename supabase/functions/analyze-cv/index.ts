@@ -10,11 +10,34 @@ Deno.serve(async (request) => {
     const body = await request.json();
     const result = await callModelGateway({
       system:
-        "You are the neutral evidence-labeling layer for a recruiting operator. Return only JSON. Do not choose the final score by feel: label job requirements, candidate evidence, gaps, strengths, committee objections, and one recruiter action. The server computes score and routing from your labels. Use only supplied CV and job text; do not invent personal data.",
+        `You are the evidence-labeling layer for a senior recruiting operator.
+Return only JSON. Do not choose the final score by feel: the server computes score and routing from your labels.
+
+Your job is not keyword matching. Reason like a recruiter and hiring manager would:
+1. Understand the role mission first: infer the work to be done, business outcomes, operating context, success signals, and which requirements are truly central.
+2. Read the candidate as evidence: career trajectory, scope, complexity, seniority, relevant achievements, and transferable experience. Use only supplied CV and job text.
+3. Map evidence to mission-critical job needs. A match requires evidence that the candidate can perform the mission, not just shared vocabulary.
+4. Separate strengths, gaps, assumptions, and follow-up questions. Treat missing evidence as missing evidence, not failure.
+5. Ignore protected, demographic, identity, name, age, school prestige, nationality, address, photo, and other job-irrelevant signals unless the job text makes a legal, role-specific requirement explicit.
+6. Prefer calibrated uncertainty over confident invention. If the CV or job description is thin, say so in quality and label items as partial/missing.
+7. Produce a recruiter-facing recommendation that a human can review, with smart arguments tied to job missions and candidate evidence.
+
+Label every job item with tier, centrality, status, obtainable, and evidence. Explain why core items matter to the role mission. Return concise evidence, not hidden chain-of-thought.`,
       user: JSON.stringify(body),
       schemaHint: {
         candidateName: "Candidate name or Candidate",
         candidateTitle: "Current or inferred title",
+        roleMission: {
+          primaryMission: "What the hire is expected to accomplish",
+          businessOutcomes: ["Outcome the role exists to deliver"],
+          operatingContext: "Team, market, customer, or technical context inferred from the job text",
+          successSignals: ["What strong performance would look like in this role"],
+        },
+        candidateRead: {
+          trajectory: "What the CV suggests about career direction and seniority",
+          strongestRelevantContext: "Most relevant scope, domain, or complexity signal",
+          evidenceLimits: ["Important unknowns or weak evidence"],
+        },
         jobItems: [
           {
             item: "Requirement from the target role",
@@ -22,6 +45,7 @@ Deno.serve(async (request) => {
             centrality: "core",
             status: "meets",
             obtainable: false,
+            whyItMatters: "How this item connects to the role mission",
             evidence: "Resume evidence or gap",
           },
         ],
@@ -30,7 +54,14 @@ Deno.serve(async (request) => {
             strength: "Candidate strength",
             centrality: "core",
             mapsToNeed: true,
+            mapsToMission: "Business or delivery need this strength supports",
             evidence: "Specific resume evidence",
+          },
+        ],
+        riskQuestions: [
+          {
+            question: "Targeted follow-up question",
+            reason: "What assumption or gap this question resolves",
           },
         ],
         committee: [
@@ -56,6 +87,10 @@ Deno.serve(async (request) => {
     const summary = stringValue(output.summary, "Candidate analysis completed.");
     const nextAction = routeCvAction(scoreReceipt, stringValue(output.nextAction, "Review with hiring manager"));
     const quality = stringValue(output.quality, "Quality check passed");
+    const roleMission = normalizeRoleMission(output.roleMission);
+    const candidateRead = normalizeCandidateRead(output.candidateRead);
+    const fitArguments = normalizeFitArguments(output.strengths);
+    const followUpQuestions = normalizeFollowUpQuestions(output.riskQuestions);
     const status = score >= 88 ? "Top match" : score >= 76 ? "Strong match" : "Review";
     const harnessPath = "harness/icm/workspaces/cv-match-dispatch";
     const supabase = getSupabaseAdmin();
@@ -94,6 +129,10 @@ Deno.serve(async (request) => {
         model: result.model,
         scoreReceipt,
         committee: Array.isArray(output.committee) ? output.committee : [],
+        roleMission,
+        candidateRead,
+        fitArguments,
+        followUpQuestions,
         source: "model labels, deterministic score",
       },
     });
@@ -116,6 +155,10 @@ Deno.serve(async (request) => {
         evidence,
         gaps,
         tags: stringArray(output.tags),
+        roleMission,
+        candidateRead,
+        fitArguments,
+        followUpQuestions,
       },
       run: toRun(runRecord),
     });
@@ -130,6 +173,50 @@ function stringValue(value: unknown, fallback: string) {
 
 function stringArray(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value ? value as Record<string, unknown> : {};
+}
+
+function normalizeRoleMission(value: unknown) {
+  const mission = objectValue(value);
+  return {
+    primaryMission: stringValue(mission.primaryMission, ""),
+    businessOutcomes: stringArray(mission.businessOutcomes),
+    successSignals: stringArray(mission.successSignals),
+  };
+}
+
+function normalizeCandidateRead(value: unknown) {
+  const read = objectValue(value);
+  return {
+    trajectory: stringValue(read.trajectory, ""),
+    strongestRelevantContext: stringValue(read.strongestRelevantContext, ""),
+    evidenceLimits: stringArray(read.evidenceLimits),
+  };
+}
+
+function normalizeFitArguments(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 4).map((raw) => {
+    const item = objectValue(raw);
+    return {
+      point: stringValue(item.mapsToMission, stringValue(item.strength, "")),
+      evidence: stringValue(item.evidence, ""),
+    };
+  }).filter((item) => item.point || item.evidence);
+}
+
+function normalizeFollowUpQuestions(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 3).map((raw) => {
+    const item = objectValue(raw);
+    return {
+      question: stringValue(item.question, ""),
+      reason: stringValue(item.reason, ""),
+    };
+  }).filter((item) => item.question || item.reason);
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {
