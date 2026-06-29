@@ -934,16 +934,22 @@ textarea:focus-visible {
   background: rgba(251, 252, 247, 0.72);
   color: var(--text);
   padding: 10px 12px;
-  cursor: pointer;
   transition:
     background 0.18s ease,
     border-color 0.18s ease,
     color 0.18s ease;
 }
 
-.file-picker:hover {
+.file-picker:hover,
+.file-picker:focus-visible,
+.file-picker-active {
   border-color: rgba(37, 95, 77, 0.34);
   background: #fbfcf7;
+}
+
+.file-picker:focus-visible {
+  outline: 3px solid rgba(37, 95, 77, 0.14);
+  outline-offset: 2px;
 }
 
 .file-picker strong,
@@ -963,15 +969,20 @@ textarea:focus-visible {
   font-weight: 650;
 }
 
-.file-picker input {
+.file-picker-input {
   position: absolute;
-  inset: 0;
-  width: 100%;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
   opacity: 0;
-  cursor: pointer;
+  pointer-events: none;
 }
 
 .file-picker-action {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -981,8 +992,22 @@ textarea:focus-visible {
   background: var(--surface-soft);
   color: var(--blue);
   padding: 0 10px;
+  font-family: inherit;
   font-size: 12px;
   font-weight: 850;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.file-picker-action:hover,
+.file-picker-action:focus-visible {
+  border-color: rgba(37, 95, 77, 0.38);
+  background: #ffffff;
+}
+
+.file-picker-action:focus-visible {
+  outline: 3px solid rgba(37, 95, 77, 0.14);
+  outline-offset: 2px;
 }
 
 .file-picker em {

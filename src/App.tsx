@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -1391,26 +1391,56 @@ function FileDrop({
   onFile: (file: File) => Promise<void>;
   accept: string;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  function openPicker() {
+    if (!inputRef.current) return;
+    inputRef.current.value = "";
+    inputRef.current.click();
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) void onFile(file);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) void onFile(file);
+  }
+
   return (
-    <label className="file-picker">
+    <div
+      className={`file-picker ${isDragging ? "file-picker-active" : ""}`}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setIsDragging(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={handleDrop}
+    >
       <span>
         <strong>{label}</strong>
         <small>{helper}</small>
       </span>
       <em>{fileName || "No file attached"}</em>
-      <span className="file-picker-action">
+      <button className="file-picker-action" type="button" onClick={openPicker}>
         <UploadCloud size={16} aria-hidden="true" />
-        Browse
-      </span>
+        Browse file
+      </button>
       <input
+        ref={inputRef}
+        className="file-picker-input"
         type="file"
         accept={accept}
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void onFile(file);
-        }}
+        tabIndex={-1}
+        onChange={handleFileChange}
       />
-    </label>
+    </div>
   );
 }
 
