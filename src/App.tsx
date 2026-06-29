@@ -6,15 +6,12 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Database,
-  Download,
   FileText,
   History,
   Layers3,
   Mail,
   PlayCircle,
-  RefreshCw,
   Send,
-  Settings,
   ShieldCheck,
   Target,
   UploadCloud,
@@ -45,13 +42,11 @@ import {
 } from "./workflowApi";
 import {
   confidenceLabel,
-  describeGateway,
-  providerPresets,
   qualityTone,
 } from "./harness";
 import { hasSupabaseConfig } from "./supabaseClient";
 
-type View = "command" | "cv" | "crm" | "prospects" | "logs" | "settings";
+type View = "command" | "cv" | "crm" | "prospects" | "logs";
 type Tone = "default" | "success" | "warning" | "danger" | "info" | "strong";
 type RunningWorkflow = "cv" | "crm" | "prospects" | null;
 
@@ -66,7 +61,6 @@ const navItems: Array<{
   { id: "crm", label: "CRM Actions", icon: Users },
   { id: "prospects", label: "Lead Capture", icon: Target },
   { id: "logs", label: "Reviews", icon: History, group: "operations" },
-  { id: "settings", label: "Settings", icon: Settings, group: "operations" },
 ];
 
 const chartColors = {
@@ -102,10 +96,10 @@ function writeStored<T>(key: string, value: T) {
 
 function cleanNotice(message: string) {
   if (/supabase|service_role|vite_|deployment|environment|backend|permission denied/i.test(message)) {
-    return "This run could not be completed. Check settings and try again.";
+    return "This run could not be completed. Try again after the workspace connection is checked.";
   }
   if (/model_api_key|api key|groq|openrouter/i.test(message)) {
-    return "The analysis engine needs attention. Check settings and try again.";
+    return "The analysis engine needs attention. Try again after the connection is checked.";
   }
   return message;
 }
@@ -124,7 +118,6 @@ function App() {
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [selectedProspectId, setSelectedProspectId] = useState<string | null>(null);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-  const [providerId, setProviderId] = useState(providerPresets[0].id);
   const [notice, setNotice] = useState("");
   const [runningWorkflow, setRunningWorkflow] = useState<RunningWorkflow>(null);
   const [cvFileName, setCvFileName] = useState("");
@@ -137,11 +130,6 @@ function App() {
   const [icpText, setIcpText] = useState("");
   const [prospectSourceText, setProspectSourceText] = useState("");
   const [manualProspectUrl, setManualProspectUrl] = useState("");
-
-  const selectedProvider = useMemo(
-    () => providerPresets.find((provider) => provider.id === providerId) ?? providerPresets[0],
-    [providerId],
-  );
 
   const selectedCandidate = useMemo(
     () =>
@@ -177,14 +165,11 @@ function App() {
   const commandMetrics = useMemo(
     () => ({
       cvReady: candidateMatches.length,
-      topMatches: candidateMatches.filter((candidate) => candidate.score >= 85).length,
       dealsNeedingAction: crmDeals.filter((deal) => deal.risk !== "Low").length,
-      revenueAtRisk: summarizeRevenueAtRisk(crmDeals),
       prospectsToReview: qualifiedProspects.length,
       prospectsReady: qualifiedProspects.filter((prospect) => prospect.status === "Capture now").length,
-      reviewCount: logs.filter((log) => log.status === "Needs review" || log.status === "Ready to review").length,
     }),
-    [candidateMatches, crmDeals, qualifiedProspects, logs],
+    [candidateMatches, crmDeals, qualifiedProspects],
   );
 
   useEffect(() => writeStored(storageKeys.candidates, candidateMatches), [candidateMatches]);
@@ -414,14 +399,6 @@ function App() {
               logs={logs}
               selectedLog={selectedLog}
               setSelectedLogId={setSelectedLogId}
-              onAction={setNotice}
-            />
-          )}
-          {activeView === "settings" && (
-            <SettingsScreen
-              providerId={providerId}
-              setProviderId={setProviderId}
-              selectedProvider={selectedProvider}
             />
           )}
         </section>
@@ -503,7 +480,6 @@ function TopBar({
     crm: "CRM Pipeline Optimizer",
     prospects: "Prospect Qualification",
     logs: "Reviews",
-    settings: "Settings",
   };
 
   return (
@@ -539,47 +515,38 @@ function CommandCenter({
   prospects: Prospect[];
   metrics: {
     cvReady: number;
-    topMatches: number;
     dealsNeedingAction: number;
-    revenueAtRisk: string;
     prospectsToReview: number;
     prospectsReady: number;
-    reviewCount: number;
   };
 }) {
   const workstreams = [
     {
       title: "Candidate review",
-      description: "Compare one CV against one target role.",
-      result: `${metrics.cvReady} analyses, ${metrics.topMatches} strong matches`,
-      detail: candidates[0]?.decision ?? "Add a CV and role to produce the first recommendation.",
-      badge: metrics.cvReady,
+      description: "CV + role",
+      result: metrics.cvReady > 0 ? `${metrics.cvReady} analysed` : "Not started",
+      detail: candidates[0]?.decision ?? "Score a candidate against a job target.",
       tone: "info" as Tone,
       icon: FileText,
       view: "cv" as View,
-      action: "Open",
     },
     {
       title: "CRM analysis",
-      description: "Find stalled deals and owner-level next steps.",
-      result: `${metrics.dealsNeedingAction} actions, ${metrics.revenueAtRisk} at risk`,
-      detail: deals[0]?.action ?? "Paste a CRM export to surface revenue actions.",
-      badge: metrics.dealsNeedingAction,
+      description: "CRM CSV",
+      result: metrics.dealsNeedingAction > 0 ? `${metrics.dealsNeedingAction} actions` : "Not started",
+      detail: deals[0]?.action ?? "Find stalled deals and owner follow-ups.",
       tone: "warning" as Tone,
       icon: Database,
       view: "crm" as View,
-      action: "Open",
     },
     {
       title: "Lead qualification",
-      description: "Score prospects against the ICP before capture.",
-      result: `${metrics.prospectsToReview} scored, ${metrics.prospectsReady} ready`,
-      detail: prospects[0]?.nextAction ?? "Add an ICP and source list to create the first lead score.",
-      badge: metrics.prospectsReady,
+      description: "ICP + source list",
+      result: metrics.prospectsToReview > 0 ? `${metrics.prospectsReady} ready` : "Not started",
+      detail: prospects[0]?.nextAction ?? "Score prospects before CRM capture.",
       tone: "success" as Tone,
       icon: Target,
       view: "prospects" as View,
-      action: "Open",
     },
   ];
 
@@ -589,10 +556,9 @@ function CommandCenter({
         <Card className="ops-command-card">
           <div className="ops-command-header">
             <div>
-              <p className="eyebrow">Operations</p>
-              <h2>Choose the work to run</h2>
+              <p className="eyebrow">Workflows</p>
+              <h2>Start an analysis</h2>
             </div>
-            <Badge tone={metrics.reviewCount > 0 ? "warning" : "default"}>{metrics.reviewCount} reviews</Badge>
           </div>
 
           <div className="workstream-list">
@@ -604,28 +570,43 @@ function CommandCenter({
                 description={item.description}
                 result={item.result}
                 detail={item.detail}
-                badge={item.badge}
                 tone={item.tone}
-                action={item.action}
                 onOpen={() => setActiveView(item.view)}
               />
             ))}
           </div>
+
+          <div className="ops-review-footer">
+            {logs.length > 0 ? (
+              <>
+                <div>
+                  <p className="eyebrow">Latest output</p>
+                  <h3>{logs[0].workflow}</h3>
+                  <p>{logs[0].result}</p>
+                </div>
+                <button className="text-button" type="button" onClick={() => setActiveView("logs")}>
+                  View reviews
+                </button>
+              </>
+            ) : (
+              <p>Results and reviews will appear here after the first run.</p>
+            )}
+          </div>
         </Card>
 
-        <Card className="review-panel-card">
-          <div className="card-header">
-            <div>
-              <p className="eyebrow">Reviews</p>
-              <h3>Latest output</h3>
+        {logs.length > 1 ? (
+          <Card className="review-panel-card">
+            <div className="card-header">
+              <div>
+                <p className="eyebrow">Recent</p>
+                <h3>Previous runs</h3>
+              </div>
+              <button className="text-button" type="button" onClick={() => setActiveView("logs")}>
+                View all
+              </button>
             </div>
-            <button className="text-button" type="button" onClick={() => setActiveView("logs")}>
-              View all
-            </button>
-          </div>
-          <div className="queue-list compact-queue">
-            {logs.length > 0 ? (
-              logs.slice(0, 3).map((log) => (
+            <div className="queue-list compact-queue">
+              {logs.slice(0, 3).map((log) => (
                 <button key={log.id} className="queue-item" type="button" onClick={() => setActiveView("logs")}>
                   <span className="queue-icon">
                     <ClipboardCheck size={16} aria-hidden="true" />
@@ -636,12 +617,10 @@ function CommandCenter({
                   </span>
                   <Badge tone={log.status === "Needs review" ? "warning" : "success"}>{log.status}</Badge>
                 </button>
-              ))
-            ) : (
-              <EmptyState title="No reviews yet" description="Completed analyses will appear here." />
-            )}
-          </div>
-        </Card>
+              ))}
+            </div>
+          </Card>
+        ) : null}
       </section>
     </div>
   );
@@ -653,9 +632,7 @@ function WorkstreamRow({
   description,
   result,
   detail,
-  badge,
   tone,
-  action,
   onOpen,
 }: {
   icon: typeof FileText;
@@ -663,13 +640,11 @@ function WorkstreamRow({
   description: string;
   result: string;
   detail: string;
-  badge: number;
   tone: Tone;
-  action: string;
   onOpen: () => void;
 }) {
   return (
-    <article className="workstream-row">
+    <button className={`workstream-row workstream-row-${tone}`} type="button" onClick={onOpen}>
       <div className="workflow-icon">
         <Icon size={20} aria-hidden="true" />
       </div>
@@ -681,13 +656,9 @@ function WorkstreamRow({
         <small>{detail}</small>
       </div>
       <div className="workstream-meta">
-        <Badge tone={tone}>{badge}</Badge>
         <small>{result}</small>
       </div>
-      <Button variant="secondary" onClick={onOpen}>
-        {action}
-      </Button>
-    </article>
+    </button>
   );
 }
 
@@ -783,20 +754,18 @@ function CvTool({
         </Card>
       </section>
 
-      <section className="dashboard-grid dashboard-grid-wide">
-        <Card className="results-card">
-          <div className="card-header">
-            <div>
-              <p className="eyebrow">Candidate ranking</p>
-              <h3>Evidence-backed matches</h3>
+      {candidates.length > 0 ? (
+        <section className="dashboard-grid dashboard-grid-wide">
+          <Card className="results-card">
+            <div className="card-header">
+              <div>
+                <p className="eyebrow">Candidate ranking</p>
+                <h3>Evidence-backed matches</h3>
+              </div>
+              <Badge tone="success">Review ready</Badge>
             </div>
-            <Badge tone={candidates.length > 0 ? "success" : "default"}>
-              {candidates.length > 0 ? "Review ready" : "No results yet"}
-            </Badge>
-          </div>
-          <div className="candidate-list">
-            {candidates.length > 0 ? (
-              candidates.map((candidate) => (
+            <div className="candidate-list">
+              {candidates.map((candidate) => (
                 <button
                   key={candidate.id}
                   type="button"
@@ -812,16 +781,12 @@ function CvTool({
                   <ScoreRing score={candidate.score} />
                   <Badge tone={candidate.score >= 85 ? "success" : "warning"}>{candidate.status}</Badge>
                 </button>
-              ))
-            ) : (
-              <EmptyState title="No candidate analysis yet" description="Add a CV and target role, then run match analysis." />
-            )}
-          </div>
-        </Card>
+              ))}
+            </div>
+          </Card>
 
-        <Card className="detail-card">
           {selectedCandidate ? (
-            <>
+            <Card className="detail-card">
               <div className="card-header">
                 <div>
                   <p className="eyebrow">Match evidence</p>
@@ -849,12 +814,10 @@ function CvTool({
                   Copy note
                 </Button>
               </div>
-            </>
-          ) : (
-            <EmptyState title="No match selected" description="Run match analysis to inspect evidence and gaps." />
-          )}
-        </Card>
-      </section>
+            </Card>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -886,7 +849,7 @@ function CrmAnalyzer({
 }) {
   return (
     <div className="content-stack">
-      <section className="split-grid split-grid-narrow">
+      <section className={deals.length > 0 ? "split-grid split-grid-narrow" : "single-panel"}>
         <Card className="input-panel">
           <PanelTitle
             title="CRM data"
@@ -910,67 +873,48 @@ function CrmAnalyzer({
               placeholder="company,owner,stage,value,last activity,next step&#10;Northstar Talent,A. Martin,Negotiation,42000,21 days,"
             />
           </label>
-          <div className="mapping-grid">
-            {["Company", "Owner", "Stage", "Value", "Last activity", "Next step"].map((field) => (
-              <label className="field compact-field" key={field}>
-                <span>{field}</span>
-                <select defaultValue={field}>
-                  <option>{field}</option>
-                  <option>Custom field</option>
-                  <option>Not available</option>
-                </select>
-              </label>
-            ))}
-          </div>
-          <label className="field">
-            <span>Date range</span>
-            <select defaultValue="Last 90 days">
-              <option>Last 30 days</option>
-              <option>Last 90 days</option>
-              <option>This quarter</option>
-              <option>All open deals</option>
-            </select>
-          </label>
           <Button className="full-button" onClick={runCrmAnalysis} disabled={isRunning}>
             <PlayCircle size={16} aria-hidden="true" />
             {isRunning ? "Checking pipeline..." : "Run pipeline analysis"}
           </Button>
         </Card>
 
-        <Card>
-          <div className="metric-grid metric-grid-two">
-            <Metric label="Active pipeline" value={summarizePipelineValue(deals)} helper={`${deals.length} open deals`} tone="info" />
-            <Metric label="Needs action" value={String(deals.filter((deal) => deal.risk !== "Low").length)} helper="Owner follow-up required" tone="warning" />
-            <Metric label="High risk" value={String(deals.filter((deal) => deal.risk === "High").length)} helper="Review before forecast" tone="danger" />
-            <Metric label="Low risk" value={String(deals.filter((deal) => deal.risk === "Low").length)} helper="Ready to progress" tone="success" />
-          </div>
-          <div className="chart-wrap chart-wrap-small">
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={pipeline}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.grid} />
-                <XAxis dataKey="stage" tickLine={false} axisLine={false} fontSize={12} />
-                <YAxis tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip cursor={{ fill: chartColors.cursor }} />
-                <Bar dataKey="value" name="Open deals" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="stalled" name="Needs action" fill={chartColors.secondary} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
+        {deals.length > 0 ? (
+          <Card>
+            <div className="metric-grid metric-grid-two">
+              <Metric label="Active pipeline" value={summarizePipelineValue(deals)} helper={`${deals.length} open deals`} tone="info" />
+              <Metric label="Needs action" value={String(deals.filter((deal) => deal.risk !== "Low").length)} helper="Owner follow-up required" tone="warning" />
+              <Metric label="High risk" value={String(deals.filter((deal) => deal.risk === "High").length)} helper="Review before forecast" tone="danger" />
+              <Metric label="Low risk" value={String(deals.filter((deal) => deal.risk === "Low").length)} helper="Ready to progress" tone="success" />
+            </div>
+            <div className="chart-wrap chart-wrap-small">
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={pipeline}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.grid} />
+                  <XAxis dataKey="stage" tickLine={false} axisLine={false} fontSize={12} />
+                  <YAxis tickLine={false} axisLine={false} fontSize={12} />
+                  <Tooltip cursor={{ fill: chartColors.cursor }} />
+                  <Bar dataKey="value" name="Open deals" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="stalled" name="Needs action" fill={chartColors.secondary} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        ) : null}
       </section>
 
-      <section className="dashboard-grid dashboard-grid-wide">
-        <Card>
-          <div className="card-header">
-            <div>
-              <p className="eyebrow">Deals needing action</p>
-              <h3>Prioritized by business risk</h3>
+      {deals.length > 0 ? (
+        <section className="dashboard-grid dashboard-grid-wide">
+          <Card>
+            <div className="card-header">
+              <div>
+                <p className="eyebrow">Deals needing action</p>
+                <h3>Prioritized by business risk</h3>
+              </div>
+              <Badge tone="warning">
+                {deals.filter((deal) => deal.risk !== "Low").length} actions found
+              </Badge>
             </div>
-            <Badge tone={deals.length > 0 ? "warning" : "default"}>
-              {deals.filter((deal) => deal.risk !== "Low").length} actions found
-            </Badge>
-          </div>
-          {deals.length > 0 ? (
             <DataTable
               headers={["Company", "Stage", "Owner", "Value", "Risk", "Action"]}
               rows={deals.map((deal) => [
@@ -986,13 +930,9 @@ function CrmAnalyzer({
                 deal.action,
               ])}
             />
-          ) : (
-            <EmptyState title="No CRM analysis yet" description="Upload or paste a CRM CSV, then run pipeline analysis." />
-          )}
-        </Card>
-        <Card className="detail-card">
+          </Card>
           {selectedDeal ? (
-            <>
+            <Card className="detail-card">
               <div className="card-header">
                 <div>
                   <p className="eyebrow">Recommended next step</p>
@@ -1033,12 +973,10 @@ function CrmAnalyzer({
                   Mark reviewed
                 </Button>
               </div>
-            </>
-          ) : (
-            <EmptyState title="No deal selected" description="Run a CRM analysis to inspect prioritized next steps." />
-          )}
-        </Card>
-      </section>
+            </Card>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -1095,11 +1033,6 @@ function ProspectTool({
               placeholder="B2B recruiting agencies, HR SaaS teams, and RevOps leaders with active hiring needs, CRM cleanup pain, or automation projects."
             />
           </label>
-          <div className="chip-row">
-            <Badge tone="info">Recruiting</Badge>
-            <Badge tone="success">HubSpot or Pipedrive</Badge>
-            <Badge tone="warning">Active hiring signal</Badge>
-          </div>
         </Card>
         <Card className="input-panel">
           <PanelTitle
@@ -1137,18 +1070,18 @@ function ProspectTool({
         </Card>
       </section>
 
-      <section className="dashboard-grid dashboard-grid-wide">
-        <Card>
-          <div className="card-header">
-            <div>
-              <p className="eyebrow">Qualification results</p>
-              <h3>Capture-ready prospects</h3>
+      {prospects.length > 0 ? (
+        <section className="dashboard-grid dashboard-grid-wide">
+          <Card>
+            <div className="card-header">
+              <div>
+                <p className="eyebrow">Qualification results</p>
+                <h3>Capture-ready prospects</h3>
+              </div>
+              <Badge tone="success">
+                {prospects.filter((prospect) => prospect.status === "Capture now").length} ready
+              </Badge>
             </div>
-            <Badge tone={prospects.length > 0 ? "success" : "default"}>
-              {prospects.filter((prospect) => prospect.status === "Capture now").length} ready
-            </Badge>
-          </div>
-          {prospects.length > 0 ? (
             <DataTable
               headers={["Prospect", "Company", "Source", "Fit", "Status", "Next action"]}
               rows={prospects.map((prospect) => [
@@ -1164,13 +1097,9 @@ function ProspectTool({
                 prospect.nextAction,
               ])}
             />
-          ) : (
-            <EmptyState title="No prospects scored yet" description="Define the ICP, add a source, then run qualification." />
-          )}
-        </Card>
-        <Card className="detail-card">
+          </Card>
           {selectedProspect ? (
-            <>
+            <Card className="detail-card">
               <div className="card-header">
                 <div>
                   <p className="eyebrow">Lead analysis</p>
@@ -1214,12 +1143,10 @@ function ProspectTool({
                 <Database size={16} aria-hidden="true" />
                 Capture to CRM after review
               </Button>
-            </>
-          ) : (
-            <EmptyState title="No prospect selected" description="Run qualification to inspect fit scores and outreach angles." />
-          )}
-        </Card>
-      </section>
+            </Card>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -1228,58 +1155,23 @@ function ActivityLogs({
   logs,
   selectedLog,
   setSelectedLogId,
-  onAction,
 }: {
   logs: RunLog[];
   selectedLog: RunLog | null;
   setSelectedLogId: (id: string) => void;
-  onAction: (message: string) => void;
 }) {
   return (
     <div className="content-stack">
-      <section className="toolbar-card">
-        <div className="filter-group">
-          <label className="field compact-field">
-            <span>Workflow</span>
-            <select defaultValue="All activities">
-              <option>All activities</option>
-              <option>CV Match</option>
-              <option>CRM Analysis</option>
-              <option>Prospect Qualification</option>
-            </select>
-          </label>
-          <label className="field compact-field">
-            <span>Review status</span>
-            <select defaultValue="All statuses">
-              <option>All statuses</option>
-              <option>Ready to review</option>
-              <option>Needs review</option>
-              <option>Issue found</option>
-            </select>
-          </label>
-        </div>
-        <div className="button-row">
-          <Button variant="secondary" onClick={() => onAction("Activity list refreshed.")}>
-            <RefreshCw size={16} aria-hidden="true" />
-            Refresh
-          </Button>
-          <Button onClick={() => onAction("Evidence export prepared for the selected review item.")}>
-            <Download size={16} aria-hidden="true" />
-            Export evidence
-          </Button>
-        </div>
-      </section>
-
-      <section className="dashboard-grid dashboard-grid-wide">
-        <Card>
-          <div className="card-header">
-            <div>
-              <p className="eyebrow">Run history</p>
-              <h3>Business-readable trace</h3>
+      {logs.length > 0 ? (
+        <section className="dashboard-grid dashboard-grid-wide">
+          <Card>
+            <div className="card-header">
+              <div>
+                <p className="eyebrow">Run history</p>
+                <h3>Business-readable trace</h3>
+              </div>
+              <Badge tone="info">{logs.length} runs</Badge>
             </div>
-            <Badge tone="info">{logs.length} runs</Badge>
-          </div>
-          {logs.length > 0 ? (
             <DataTable
               headers={["Workflow", "Started", "Input", "Result", "Quality", "Review"]}
               rows={logs.map((log) => [
@@ -1293,14 +1185,10 @@ function ActivityLogs({
                 <Badge tone={log.status === "Needs review" ? "warning" : "success"}>{log.status}</Badge>,
               ])}
             />
-          ) : (
-            <EmptyState title="No workflow runs yet" description="Run CV, CRM, or prospect analysis to create the first trace record." />
-          )}
-        </Card>
+          </Card>
 
-        <Card className="detail-card">
           {selectedLog ? (
-            <>
+            <Card className="detail-card">
               <div className="card-header">
                 <div>
                   <p className="eyebrow">Analysis detail</p>
@@ -1317,7 +1205,7 @@ function ActivityLogs({
                 <ShieldCheck size={18} aria-hidden="true" />
                 <div>
                   <strong>{selectedLog.quality}</strong>
-                  <p>Stored with input summary, evidence, and review status.</p>
+                  <p>Reviewed with input summary, evidence, and source trace.</p>
                 </div>
               </div>
               <details className="technical-details">
@@ -1333,125 +1221,15 @@ function ActivityLogs({
                   </div>
                 </dl>
               </details>
-            </>
-          ) : (
-            <EmptyState title="No analysis selected" description="Completed workflows will show provider, evidence, and review status here." />
-          )}
+            </Card>
+          ) : null}
+        </section>
+      ) : (
+        <Card className="empty-page-card">
+          <EmptyState title="No workflow runs yet" description="Run CV, CRM, or prospect analysis to create the first review record." />
         </Card>
-      </section>
+      )}
     </div>
-  );
-}
-
-function SettingsScreen({
-  providerId,
-  setProviderId,
-  selectedProvider,
-}: {
-  providerId: string;
-  setProviderId: (id: string) => void;
-  selectedProvider: { id: string; label: string; baseUrl: string; model: string; note: string };
-}) {
-  return (
-    <div className="content-stack">
-      <section className="dashboard-grid dashboard-grid-wide">
-        <Card>
-          <div className="card-header">
-            <div>
-              <p className="eyebrow">Analysis engine</p>
-              <h3>Provider selection</h3>
-            </div>
-            <Settings size={20} aria-hidden="true" />
-          </div>
-          <div className="provider-list">
-            {providerPresets.map((provider) => (
-              <button
-                key={provider.id}
-                type="button"
-                className={`provider-option ${providerId === provider.id ? "provider-option-active" : ""}`}
-                onClick={() => setProviderId(provider.id)}
-              >
-                <span>
-                  <strong>{provider.label}</strong>
-                  <small>{provider.note}</small>
-                </span>
-                <Badge tone={providerId === provider.id ? "success" : "default"}>
-                  {providerId === provider.id ? "Selected" : "Available"}
-                </Badge>
-              </button>
-            ))}
-          </div>
-        </Card>
-        <Card className="detail-card">
-          <div className="card-header">
-            <div>
-              <p className="eyebrow">Engine details</p>
-              <h3>{selectedProvider.label}</h3>
-            </div>
-            <ShieldCheck size={20} aria-hidden="true" />
-          </div>
-          <dl className="compact-list">
-            <div>
-              <dt>Base URL</dt>
-              <dd>{selectedProvider.baseUrl}</dd>
-            </div>
-            <div>
-              <dt>Model</dt>
-              <dd>{selectedProvider.model}</dd>
-            </div>
-            <div>
-              <dt>Runtime contract</dt>
-              <dd>{describeGateway(selectedProvider)}</dd>
-            </div>
-            <div>
-              <dt>Review mode</dt>
-              <dd>Human approval required</dd>
-            </div>
-          </dl>
-        </Card>
-      </section>
-      <Card>
-        <div className="card-header">
-          <div>
-            <p className="eyebrow">Data handling</p>
-            <h3>Workspace controls</h3>
-          </div>
-          <Database size={20} aria-hidden="true" />
-        </div>
-        <div className="settings-grid">
-          <SettingToggle title="Require review before CRM capture" description="Keep human approval on for prospect exports." checked />
-          <SettingToggle title="Store file summaries only" description="Avoid saving full CV or CRM source text in activity records." checked />
-          <SettingToggle title="Show only approved captures" description="Keep CRM export actions behind review." checked />
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function SettingToggle({
-  title,
-  description,
-  checked,
-}: {
-  title: string;
-  description: string;
-  checked: boolean;
-}) {
-  const [enabled, setEnabled] = useState(checked);
-
-  return (
-    <button
-      className="setting-toggle"
-      type="button"
-      aria-pressed={enabled}
-      onClick={() => setEnabled((value) => !value)}
-    >
-      <span>
-        <strong>{title}</strong>
-        <small>{description}</small>
-      </span>
-      <span className={`toggle-control ${enabled ? "toggle-control-on" : ""}`} aria-hidden="true" />
-    </button>
   );
 }
 
@@ -1652,14 +1430,6 @@ function buildPipelineFromDeals(deals: Deal[]) {
   });
 
   return [...byStage.values()];
-}
-
-function summarizeRevenueAtRisk(deals: Deal[]) {
-  const total = deals
-    .filter((deal) => deal.risk !== "Low")
-    .reduce((sum, deal) => sum + parseMoney(deal.value), 0);
-
-  return formatMoney(total);
 }
 
 function summarizePipelineValue(deals: Deal[]) {
