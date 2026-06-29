@@ -1,0 +1,9 @@
+{
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "env": {
+    "VITE_SUPABASE_URL": "https://loanjpdvzoqsckdrbaby.supabase.co",
+    "VITE_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvYW5qcGR2em9xc2NrZHJiYWJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3MzU0ODcsImV4cCI6MjA5ODMxMTQ4N30.8m19K_8rJQNihBOlAtURHb_QRjrjz9Wqmu1Nf6UjaUg"
+  }
+}

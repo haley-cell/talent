@@ -1,0 +1,17 @@
+{
+  "cv-match": {
+    "workspace": "workspaces/cv-match-dispatch",
+    "displayName": "CV Match & Dispatch",
+    "screen": "CV Tool"
+  },
+  "crm-analyze": {
+    "workspace": "workspaces/crm-pipeline-optimizer",
+    "displayName": "CRM Pipeline Optimizer",
+    "screen": "CRM Analyzer"
+  },
+  "prospect-qualify": {
+    "workspace": "workspaces/prospect-qualification",
+    "displayName": "Prospect Qualification",
+    "screen": "Prospect Tool"
+  }
+}

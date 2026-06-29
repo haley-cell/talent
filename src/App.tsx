@@ -1,0 +1,1913 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  BarChart3,
+  BriefcaseBusiness,
+  CheckCircle2,
+  ClipboardCheck,
+  Database,
+  Download,
+  FileText,
+  Filter,
+  History,
+  Layers3,
+  LineChart,
+  Mail,
+  PlayCircle,
+  RefreshCw,
+  Send,
+  Settings,
+  ShieldCheck,
+  Target,
+  UploadCloud,
+  Users,
+} from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  type CandidateMatch,
+  type Deal,
+  type Prospect,
+  type RunLog,
+} from "./data";
+import {
+  analyzeCrmWithLlm,
+  analyzeCvWithLlm,
+  captureProspects,
+  loadWorkspaceData,
+  normalizeRun,
+  qualifyProspectsWithLlm,
+} from "./workflowApi";
+import {
+  confidenceLabel,
+  describeGateway,
+  providerPresets,
+  qualityTone,
+} from "./harness";
+import { hasSupabaseConfig } from "./supabaseClient";
+
+type View = "command" | "cv" | "crm" | "prospects" | "logs" | "settings";
+type Tone = "default" | "success" | "warning" | "danger" | "info" | "strong";
+type RunningWorkflow = "cv" | "crm" | "prospects" | null;
+
+const navItems: Array<{
+  id: View;
+  label: string;
+  icon: typeof BarChart3;
+  group?: "operations";
+}> = [
+  { id: "command", label: "Operations Desk", icon: BarChart3 },
+  { id: "cv", label: "Candidate Review", icon: FileText },
+  { id: "crm", label: "CRM Actions", icon: Users },
+  { id: "prospects", label: "Lead Capture", icon: Target },
+  { id: "logs", label: "Reviews", icon: History, group: "operations" },
+  { id: "settings", label: "Settings", icon: Settings, group: "operations" },
+];
+
+const chartColors = {
+  primary: "#255f4d",
+  secondary: "#a7b0a8",
+  grid: "#d8ddd6",
+  cursor: "#eef2ec",
+};
+
+const storageKeys = {
+  candidates: "talent-ops:production:candidates",
+  deals: "talent-ops:production:deals",
+  prospects: "talent-ops:production:prospects",
+  logs: "talent-ops:production:logs",
+};
+
+function readStored<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStored<T>(key: string, value: T) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Cache workspace results for refreshes.
+  }
+}
+
+function cleanNotice(message: string) {
+  if (/supabase|service_role|vite_|deployment|environment|backend|permission denied/i.test(message)) {
+    return "This run could not be completed. Check settings and try again.";
+  }
+  if (/model_api_key|api key|groq|openrouter/i.test(message)) {
+    return "The analysis engine needs attention. Check settings and try again.";
+  }
+  return message;
+}
+
+function App() {
+  const [activeView, setActiveView] = useState<View>("command");
+  const [candidateMatches, setCandidateMatches] = useState<CandidateMatch[]>(() =>
+    readStored(storageKeys.candidates, []),
+  );
+  const [crmDeals, setCrmDeals] = useState<Deal[]>(() => readStored(storageKeys.deals, []));
+  const [qualifiedProspects, setQualifiedProspects] = useState<Prospect[]>(() =>
+    readStored(storageKeys.prospects, []),
+  );
+  const [logs, setLogs] = useState<RunLog[]>(() => readStored(storageKeys.logs, []));
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const [selectedProspectId, setSelectedProspectId] = useState<string | null>(null);
+  const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const [providerId, setProviderId] = useState(providerPresets[0].id);
+  const [notice, setNotice] = useState("");
+  const [runningWorkflow, setRunningWorkflow] = useState<RunningWorkflow>(null);
+  const [cvFileName, setCvFileName] = useState("");
+  const [cvText, setCvText] = useState("");
+  const [jobRole, setJobRole] = useState("");
+  const [jobDescription, setJobDescription] = useState("");
+  const [crmFileName, setCrmFileName] = useState("");
+  const [crmCsvText, setCrmCsvText] = useState("");
+  const [prospectFileName, setProspectFileName] = useState("");
+  const [icpText, setIcpText] = useState("");
+  const [prospectSourceText, setProspectSourceText] = useState("");
+  const [manualProspectUrl, setManualProspectUrl] = useState("");
+
+  const selectedProvider = useMemo(
+    () => providerPresets.find((provider) => provider.id === providerId) ?? providerPresets[0],
+    [providerId],
+  );
+
+  const selectedCandidate = useMemo(
+    () =>
+      candidateMatches.find((candidate) => candidate.id === selectedCandidateId) ??
+      candidateMatches[0] ??
+      null,
+    [candidateMatches, selectedCandidateId],
+  );
+
+  const selectedDeal = useMemo(
+    () => crmDeals.find((deal) => deal.id === selectedDealId) ?? crmDeals[0] ?? null,
+    [crmDeals, selectedDealId],
+  );
+
+  const selectedProspect = useMemo(
+    () =>
+      qualifiedProspects.find((prospect) => prospect.id === selectedProspectId) ??
+      qualifiedProspects[0] ??
+      null,
+    [qualifiedProspects, selectedProspectId],
+  );
+
+  const selectedLog = useMemo(
+    () => logs.find((log) => log.id === selectedLogId) ?? logs[0] ?? null,
+    [logs, selectedLogId],
+  );
+
+  const pipeline = useMemo(
+    () => buildPipelineFromDeals(crmDeals),
+    [crmDeals],
+  );
+
+  const commandMetrics = useMemo(
+    () => ({
+      cvReady: candidateMatches.length,
+      topMatches: candidateMatches.filter((candidate) => candidate.score >= 85).length,
+      dealsNeedingAction: crmDeals.filter((deal) => deal.risk !== "Low").length,
+      revenueAtRisk: summarizeRevenueAtRisk(crmDeals),
+      prospectsToReview: qualifiedProspects.length,
+      prospectsReady: qualifiedProspects.filter((prospect) => prospect.status === "Capture now").length,
+      reviewCount: logs.filter((log) => log.status === "Needs review" || log.status === "Ready to review").length,
+    }),
+    [candidateMatches, crmDeals, qualifiedProspects, logs],
+  );
+
+  useEffect(() => writeStored(storageKeys.candidates, candidateMatches), [candidateMatches]);
+  useEffect(() => writeStored(storageKeys.deals, crmDeals), [crmDeals]);
+  useEffect(() => writeStored(storageKeys.prospects, qualifiedProspects), [qualifiedProspects]);
+  useEffect(() => writeStored(storageKeys.logs, logs), [logs]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!hasSupabaseConfig) {
+      return;
+    }
+
+    loadWorkspaceData()
+      .then((workspace) => {
+        if (cancelled) return;
+        setCandidateMatches(workspace.candidates);
+        setCrmDeals(workspace.deals);
+        setQualifiedProspects(workspace.prospects);
+        setLogs(workspace.runs.map(normalizeRun));
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setNotice(error instanceof Error ? cleanNotice(error.message) : "Could not load the workspace.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function addLog(run: RunLog) {
+    setLogs((current) => [run, ...current]);
+    setSelectedLogId(run.id);
+    setNotice(`${run.workflow} finished. ${run.result}.`);
+  }
+
+  async function runCvAnalysis() {
+    if (runningWorkflow) return;
+    if (!cvText.trim() && !cvFileName) {
+      setActiveView("cv");
+      setNotice("Add a CV file or paste CV text before running the match.");
+      return;
+    }
+    if (!jobRole.trim() || !jobDescription.trim()) {
+      setActiveView("cv");
+      setNotice("Add the target role and job description before running the match.");
+      return;
+    }
+    setRunningWorkflow("cv");
+    setNotice("Analyzing candidate match...");
+    try {
+      const result = await analyzeCvWithLlm({
+        cvText,
+        fileName: cvFileName,
+        jobRole,
+        jobDescription,
+      });
+      setCandidateMatches((current) => [result.candidate, ...current]);
+      setSelectedCandidateId(result.candidate.id);
+      addLog(normalizeRun(result.run));
+      setActiveView("logs");
+    } catch (error) {
+      setNotice(error instanceof Error ? cleanNotice(error.message) : "CV analysis failed.");
+    } finally {
+      setRunningWorkflow(null);
+    }
+  }
+
+  async function runCrmAnalysis() {
+    if (runningWorkflow) return;
+    if (!crmCsvText.trim()) {
+      setActiveView("crm");
+      setNotice("Upload or paste a CRM CSV before running pipeline analysis.");
+      return;
+    }
+    setRunningWorkflow("crm");
+    setNotice("Checking CRM follow-ups...");
+    try {
+      const result = await analyzeCrmWithLlm({
+        csvText: crmCsvText,
+        fileName: crmFileName,
+      });
+      setCrmDeals(result.deals);
+      setSelectedDealId(result.deals[0]?.id ?? null);
+      addLog(normalizeRun(result.run));
+      setActiveView("logs");
+    } catch (error) {
+      setNotice(error instanceof Error ? cleanNotice(error.message) : "CRM analysis failed.");
+    } finally {
+      setRunningWorkflow(null);
+    }
+  }
+
+  async function runProspectQualification() {
+    if (runningWorkflow) return;
+    if (!icpText.trim()) {
+      setActiveView("prospects");
+      setNotice("Define the ICP before scoring prospects.");
+      return;
+    }
+    if (!prospectSourceText.trim() && !manualProspectUrl.trim()) {
+      setActiveView("prospects");
+      setNotice("Add a prospect source, company list, or profile URL before scoring.");
+      return;
+    }
+    setRunningWorkflow("prospects");
+    setNotice("Scoring prospect fit...");
+    try {
+      const result = await qualifyProspectsWithLlm({
+        icpText,
+        sourceText: prospectSourceText,
+        manualUrl: manualProspectUrl,
+        fileName: prospectFileName,
+      });
+      setQualifiedProspects(result.prospects);
+      setSelectedProspectId(result.prospects[0]?.id ?? null);
+      addLog(normalizeRun(result.run));
+      setActiveView("logs");
+    } catch (error) {
+      setNotice(error instanceof Error ? cleanNotice(error.message) : "Prospect qualification failed.");
+    } finally {
+      setRunningWorkflow(null);
+    }
+  }
+
+  async function captureSelectedProspect(prospect: Prospect) {
+    try {
+      const result = await captureProspects([prospect]);
+      setNotice(
+        `${prospect.name} capture processed. ${result.readyCount} ready, ${result.blockedCount} blocked.`,
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? cleanNotice(error.message) : "Prospect capture failed.");
+    }
+  }
+
+  return (
+    <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        Skip to workspace
+      </a>
+      <Sidebar activeView={activeView} setActiveView={setActiveView} />
+      <main className="main-panel">
+        <TopBar
+          activeView={activeView}
+          notice={notice}
+          setActiveView={setActiveView}
+        />
+        <section id="main-content" className="page-scroll" aria-live="polite" tabIndex={-1}>
+          {activeView === "command" && (
+            <CommandCenter
+              setActiveView={setActiveView}
+              logs={logs}
+              candidates={candidateMatches}
+              deals={crmDeals}
+              prospects={qualifiedProspects}
+              metrics={commandMetrics}
+            />
+          )}
+          {activeView === "cv" && (
+            <CvTool
+              candidates={candidateMatches}
+              selectedCandidate={selectedCandidate}
+              setSelectedCandidateId={setSelectedCandidateId}
+              cvFileName={cvFileName}
+              cvText={cvText}
+              setCvText={setCvText}
+              jobRole={jobRole}
+              setJobRole={setJobRole}
+              jobDescription={jobDescription}
+              setJobDescription={setJobDescription}
+              onCvFile={async (file) => {
+                const text = await readTextFile(file);
+                setCvFileName(file.name);
+                setCvText(text);
+              }}
+              runCvAnalysis={runCvAnalysis}
+              isRunning={runningWorkflow === "cv"}
+              onAction={setNotice}
+            />
+          )}
+          {activeView === "crm" && (
+            <CrmAnalyzer
+              deals={crmDeals}
+              pipeline={pipeline}
+              selectedDeal={selectedDeal}
+              setSelectedDealId={setSelectedDealId}
+              crmFileName={crmFileName}
+              crmCsvText={crmCsvText}
+              setCrmCsvText={setCrmCsvText}
+              onCrmFile={async (file) => {
+                const text = await readTextFile(file);
+                setCrmFileName(file.name);
+                setCrmCsvText(text);
+              }}
+              runCrmAnalysis={runCrmAnalysis}
+              isRunning={runningWorkflow === "crm"}
+              onAction={setNotice}
+            />
+          )}
+          {activeView === "prospects" && (
+            <ProspectTool
+              prospects={qualifiedProspects}
+              selectedProspect={selectedProspect}
+              setSelectedProspectId={setSelectedProspectId}
+              prospectFileName={prospectFileName}
+              icpText={icpText}
+              setIcpText={setIcpText}
+              prospectSourceText={prospectSourceText}
+              setProspectSourceText={setProspectSourceText}
+              manualProspectUrl={manualProspectUrl}
+              setManualProspectUrl={setManualProspectUrl}
+              onProspectFile={async (file) => {
+                const text = await readTextFile(file);
+                setProspectFileName(file.name);
+                setProspectSourceText(text);
+              }}
+              onCaptureProspect={captureSelectedProspect}
+              runProspectQualification={runProspectQualification}
+              isRunning={runningWorkflow === "prospects"}
+              onAction={setNotice}
+            />
+          )}
+          {activeView === "logs" && (
+            <ActivityLogs
+              logs={logs}
+              selectedLog={selectedLog}
+              setSelectedLogId={setSelectedLogId}
+              onAction={setNotice}
+            />
+          )}
+          {activeView === "settings" && (
+            <SettingsScreen
+              providerId={providerId}
+              setProviderId={setProviderId}
+              selectedProvider={selectedProvider}
+            />
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function Sidebar({
+  activeView,
+  setActiveView,
+}: {
+  activeView: View;
+  setActiveView: (view: View) => void;
+}) {
+  return (
+    <aside className="sidebar">
+      <button className="brand" type="button" onClick={() => setActiveView("command")}>
+        <span className="brand-mark">
+          <Layers3 size={20} aria-hidden="true" />
+        </span>
+        <span>
+          <span className="brand-title">Talent Ops</span>
+          <span className="brand-subtitle">Studio</span>
+        </span>
+      </button>
+
+      <nav className="nav-list" aria-label="Main navigation">
+        <span className="nav-kicker">Workflows</span>
+        {navItems
+          .filter((item) => !item.group)
+          .map((item) => (
+            <NavButton key={item.id} item={item} activeView={activeView} onClick={setActiveView} />
+          ))}
+        <span className="nav-kicker nav-kicker-spaced">Operations</span>
+        {navItems
+          .filter((item) => item.group)
+          .map((item) => (
+            <NavButton key={item.id} item={item} activeView={activeView} onClick={setActiveView} />
+          ))}
+      </nav>
+    </aside>
+  );
+}
+
+function NavButton({
+  item,
+  activeView,
+  onClick,
+}: {
+  item: (typeof navItems)[number];
+  activeView: View;
+  onClick: (view: View) => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <button
+      className={`nav-item ${activeView === item.id ? "nav-item-active" : ""}`}
+      type="button"
+      onClick={() => onClick(item.id)}
+      aria-current={activeView === item.id ? "page" : undefined}
+    >
+      <Icon size={18} aria-hidden="true" />
+      <span>{item.label}</span>
+    </button>
+  );
+}
+
+function TopBar({
+  activeView,
+  notice,
+  setActiveView,
+}: {
+  activeView: View;
+  notice: string;
+  setActiveView: (view: View) => void;
+}) {
+  const titles: Record<View, string> = {
+    command: "Operations Desk",
+    cv: "CV Match & Dispatch",
+    crm: "CRM Pipeline Optimizer",
+    prospects: "Prospect Qualification",
+    logs: "Reviews",
+    settings: "Settings",
+  };
+
+  return (
+    <header className="topbar">
+      <div>
+        <p className="eyebrow">Recruiting and growth operations</p>
+        <h1>{titles[activeView]}</h1>
+      </div>
+      <div className="topbar-actions">
+        <button className="pill-button" type="button" onClick={() => setActiveView("logs")}>
+          <ClipboardCheck size={16} aria-hidden="true" />
+          Review queue
+        </button>
+        {notice ? (
+          <div className="operator-card" title={notice} role="status">
+            <CheckCircle2 size={16} aria-hidden="true" />
+            <span>{notice}</span>
+          </div>
+        ) : null}
+      </div>
+    </header>
+  );
+}
+
+function CommandCenter({
+  setActiveView,
+  logs,
+  candidates,
+  deals,
+  prospects,
+  metrics,
+  pipeline,
+  runCvAnalysis,
+  runCrmAnalysis,
+  runProspectQualification,
+  runningWorkflow,
+  onAction,
+}: {
+  setActiveView: (view: View) => void;
+  logs: RunLog[];
+  candidates: CandidateMatch[];
+  deals: Deal[];
+  prospects: Prospect[];
+  metrics: {
+    cvReady: number;
+    topMatches: number;
+    dealsNeedingAction: number;
+    revenueAtRisk: string;
+    prospectsToReview: number;
+    prospectsReady: number;
+    reviewCount: number;
+  };
+  pipeline: Array<{ stage: string; value: number; stalled: number }>;
+  runCvAnalysis: () => void;
+  runCrmAnalysis: () => void;
+  runProspectQualification: () => void;
+  runningWorkflow: RunningWorkflow;
+  onAction: (message: string) => void;
+}) {
+  const boardColumns: Array<{
+    title: string;
+    count: number;
+    meta: string;
+    accent: Tone;
+    empty: string;
+    items: BoardItem[];
+  }> = [
+    {
+      title: "Candidate review",
+      count: candidates.length,
+      meta: `${metrics.topMatches} top matches`,
+      accent: "info" as Tone,
+      empty: "No CV runs yet",
+      items: candidates.slice(0, 4).map((candidate) => ({
+        id: candidate.id,
+        title: candidate.name,
+        subtitle: candidate.title,
+        score: candidate.score,
+        tag: candidate.status,
+        detail: candidate.decision,
+        view: "cv" as View,
+      })),
+    },
+    {
+      title: "CRM actions",
+      count: deals.filter((deal) => deal.risk !== "Low").length,
+      meta: `${metrics.revenueAtRisk} at risk`,
+      accent: "warning" as Tone,
+      empty: "No CRM actions yet",
+      items: deals.slice(0, 4).map((deal) => ({
+        id: deal.id,
+        title: deal.company,
+        subtitle: `${deal.owner} · ${deal.stage}`,
+        score: deal.probability,
+        tag: `${deal.risk} risk`,
+        detail: deal.action,
+        value: deal.value,
+        view: "crm" as View,
+      })),
+    },
+    {
+      title: "Lead capture",
+      count: prospects.length,
+      meta: `${metrics.prospectsReady} capture-ready`,
+      accent: "success" as Tone,
+      empty: "No prospects scored yet",
+      items: prospects.slice(0, 4).map((prospect) => ({
+        id: prospect.id,
+        title: prospect.name,
+        subtitle: prospect.company,
+        score: prospect.fit,
+        tag: prospect.status,
+        detail: prospect.nextAction,
+        view: "prospects" as View,
+      })),
+    },
+    {
+      title: "Review queue",
+      count: logs.length,
+      meta: `${metrics.reviewCount} pending`,
+      accent: metrics.reviewCount > 0 ? "warning" as Tone : "info" as Tone,
+      empty: "No review records yet",
+      items: logs.slice(0, 4).map((log) => ({
+        id: log.id,
+        title: log.workflow,
+        subtitle: log.input,
+        tag: log.status,
+        detail: log.result,
+        view: "logs" as View,
+      })),
+    },
+  ];
+
+  return (
+    <div className="content-stack operations-workbench">
+      <section className="metric-strip board-metrics" aria-label="Workspace metrics">
+        <Metric label="CVs ready" value={String(metrics.cvReady)} helper={`${metrics.topMatches} top matches`} tone="info" />
+        <Metric label="Deal follow-ups" value={String(metrics.dealsNeedingAction)} helper={`${metrics.revenueAtRisk} at risk`} tone="warning" />
+        <Metric label="Prospects" value={String(metrics.prospectsToReview)} helper={`${metrics.prospectsReady} capture-ready`} tone="success" />
+        <Metric label="Review queue" value={String(metrics.reviewCount)} helper="awaiting human decision" tone="strong" />
+      </section>
+
+      <section className="operator-layout">
+        <div className="board-panel" aria-label="Operations board">
+          {boardColumns.map((column) => (
+            <div className={`board-column board-column-${column.accent}`} key={column.title}>
+              <div className="board-column-header">
+                <span>
+                  <strong>{column.title}</strong>
+                  <small>{column.meta}</small>
+                </span>
+                <Badge tone={column.accent}>{column.count}</Badge>
+              </div>
+              <div className="board-card-list">
+                {column.items.length > 0 ? (
+                  column.items.map((item) => (
+                    <button className="board-card" key={item.id} type="button" onClick={() => setActiveView(item.view)}>
+                      <span className="board-card-main">
+                        <strong>{item.title}</strong>
+                        <small>{item.subtitle}</small>
+                      </span>
+                      <span className="board-card-score">
+                        {typeof item.score === "number" ? item.score : item.tag}
+                      </span>
+                      <span className="board-card-detail">{item.detail}</span>
+                      {item.value ? <span className="board-card-value">{item.value}</span> : null}
+                    </button>
+                  ))
+                ) : (
+                  <div className="board-empty">{column.empty}</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <aside className="run-panel" aria-label="Run workflows">
+          <div className="run-panel-header">
+            <span className="run-dot" aria-hidden="true" />
+            <div>
+              <p className="eyebrow">Run desk</p>
+              <h2>Start a workflow</h2>
+            </div>
+          </div>
+          <WorkflowStartCard
+            icon={FileText}
+            title="Match a CV"
+            description="Add a candidate and target role."
+            inputLabel="Candidate + role"
+            inputHint="CV text and job target"
+            buttonLabel="Find match"
+            runningLabel="Analyzing..."
+            isRunning={runningWorkflow === "cv"}
+            onOpen={() => setActiveView("cv")}
+            onRun={runCvAnalysis}
+            onPrepare={() => onAction("Open the candidate review desk and add the CV.")}
+          />
+          <WorkflowStartCard
+            icon={Database}
+            title="Analyze CRM"
+            description="Import open deals and find owner actions."
+            inputLabel="CRM export"
+            inputHint="CSV or pasted rows"
+            buttonLabel="Find actions"
+            runningLabel="Checking..."
+            isRunning={runningWorkflow === "crm"}
+            onOpen={() => setActiveView("crm")}
+            onRun={runCrmAnalysis}
+            onPrepare={() => onAction("Open CRM actions and import the deal export.")}
+          />
+          <WorkflowStartCard
+            icon={Target}
+            title="Qualify leads"
+            description="Score prospects against the ICP."
+            inputLabel="ICP + source"
+            inputHint="Company list or profile URLs"
+            buttonLabel="Score leads"
+            runningLabel="Scoring..."
+            isRunning={runningWorkflow === "prospects"}
+            onOpen={() => setActiveView("prospects")}
+            onRun={runProspectQualification}
+            onPrepare={() => onAction("Open lead capture and add the ICP and sources.")}
+          />
+        </aside>
+      </section>
+
+      <section className="dashboard-grid board-support-grid">
+        <Card>
+          <div className="card-header">
+            <div>
+              <p className="eyebrow">Pipeline snapshot</p>
+              <h3>Deals by stage</h3>
+            </div>
+            <LineChart size={20} aria-hidden="true" />
+          </div>
+          <div className="chart-wrap" aria-label="Deals by stage chart">
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={pipeline}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.grid} />
+                <XAxis dataKey="stage" tickLine={false} axisLine={false} fontSize={12} />
+                <YAxis tickLine={false} axisLine={false} fontSize={12} />
+                <Tooltip cursor={{ fill: chartColors.cursor }} />
+                <Bar dataKey="value" name="Active deals" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="stalled" name="Need action" fill={chartColors.secondary} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+        <Card>
+          <div className="card-header">
+            <div>
+              <p className="eyebrow">Priority queue</p>
+              <h3>Review next</h3>
+            </div>
+            <Filter size={20} aria-hidden="true" />
+          </div>
+          <div className="queue-list">
+            {logs.length > 0 ? (
+              logs.slice(0, 4).map((log) => (
+                <button key={log.id} className="queue-item" type="button" onClick={() => setActiveView("logs")}>
+                  <span className="queue-icon">
+                    <ClipboardCheck size={16} aria-hidden="true" />
+                  </span>
+                  <span>
+                    <strong>{log.workflow}</strong>
+                    <small>{log.result}</small>
+                  </span>
+                  <Badge tone={log.status === "Needs review" ? "warning" : "success"}>{log.status}</Badge>
+                </button>
+              ))
+            ) : (
+              <EmptyState title="Review queue is empty" description="The next completed workflow will appear here." />
+            )}
+          </div>
+        </Card>
+      </section>
+    </div>
+  );
+}
+
+function WorkflowStartCard({
+  icon: Icon,
+  title,
+  description,
+  inputLabel,
+  inputHint,
+  buttonLabel,
+  runningLabel,
+  isRunning,
+  onOpen,
+  onRun,
+  onPrepare,
+}: {
+  icon: typeof FileText;
+  title: string;
+  description: string;
+  inputLabel: string;
+  inputHint: string;
+  buttonLabel: string;
+  runningLabel: string;
+  isRunning: boolean;
+  onOpen: () => void;
+  onRun: () => void;
+  onPrepare: () => void;
+}) {
+  return (
+    <Card className="workflow-card">
+      <div className="workflow-card-top">
+        <div className="workflow-icon">
+          <Icon size={22} aria-hidden="true" />
+        </div>
+        <div>
+          <h3>{title}</h3>
+          <p>{description}</p>
+        </div>
+      </div>
+      <button
+        className="input-preview"
+        type="button"
+        onClick={() => {
+          onPrepare();
+          onOpen();
+        }}
+      >
+        <span className="input-preview-icon">
+          <UploadCloud size={24} aria-hidden="true" />
+        </span>
+        <span className="input-preview-copy">
+          <strong>{inputLabel}</strong>
+          <small>{inputHint}</small>
+        </span>
+        <span className="input-preview-action">Add data</span>
+      </button>
+      <div className="button-row">
+        <Button
+          variant="secondary"
+          onClick={() => {
+            onPrepare();
+            onOpen();
+          }}
+        >
+          Open
+        </Button>
+        <Button onClick={onRun} disabled={isRunning}>
+          {isRunning ? runningLabel : buttonLabel}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function CvTool({
+  candidates,
+  selectedCandidate,
+  setSelectedCandidateId,
+  cvFileName,
+  cvText,
+  setCvText,
+  jobRole,
+  setJobRole,
+  jobDescription,
+  setJobDescription,
+  onCvFile,
+  runCvAnalysis,
+  isRunning,
+  onAction,
+}: {
+  candidates: CandidateMatch[];
+  selectedCandidate: CandidateMatch | null;
+  setSelectedCandidateId: (id: string) => void;
+  cvFileName: string;
+  cvText: string;
+  setCvText: (value: string) => void;
+  jobRole: string;
+  setJobRole: (value: string) => void;
+  jobDescription: string;
+  setJobDescription: (value: string) => void;
+  onCvFile: (file: File) => Promise<void>;
+  runCvAnalysis: () => void;
+  isRunning: boolean;
+  onAction: (message: string) => void;
+}) {
+  return (
+    <div className="content-stack">
+      <WorkflowSummary
+        title="CV Match & Dispatch"
+        status="Draft ready"
+        steps={["Add candidate", "Set target role", "Review recommendation"]}
+      />
+      <section className="split-grid">
+        <Card className="input-panel">
+          <PanelTitle
+            eyebrow="Step 1"
+            title="Candidate input"
+            icon={UploadCloud}
+            helper="Upload a file or paste CV text before running analysis."
+          />
+          <FileDrop
+            label="Candidate CV"
+            helper="Upload a text CV or paste the CV below"
+            fileName={cvFileName}
+            onFile={onCvFile}
+            accept=".txt,.md,.csv"
+          />
+          <label className="field">
+            <span>
+              Paste CV text <small>required when no text file is uploaded</small>
+            </span>
+            <textarea
+              rows={6}
+              value={cvText}
+              onChange={(event) => setCvText(event.target.value)}
+              placeholder="Paste the candidate CV text here."
+            />
+          </label>
+        </Card>
+
+        <Card className="input-panel">
+          <PanelTitle
+            eyebrow="Step 2"
+            title="Job target"
+            icon={BriefcaseBusiness}
+            helper="Define the role so the assistant can compare evidence, not guess."
+          />
+          <label className="field">
+            <span>
+              Target role <small>required</small>
+            </span>
+            <input
+              value={jobRole}
+              onChange={(event) => setJobRole(event.target.value)}
+              placeholder="Lead React Engineer, EMEA"
+            />
+          </label>
+          <label className="field">
+            <span>
+              Job description <small>required</small>
+            </span>
+            <textarea
+              rows={7}
+              value={jobDescription}
+              onChange={(event) => setJobDescription(event.target.value)}
+              placeholder="Paste the job description, scorecard, or key requirements."
+            />
+          </label>
+          <Button className="full-button" onClick={runCvAnalysis} disabled={isRunning}>
+            <PlayCircle size={16} aria-hidden="true" />
+            {isRunning ? "Analyzing match..." : "Run match analysis"}
+          </Button>
+        </Card>
+      </section>
+
+      <section className="dashboard-grid dashboard-grid-wide">
+        <Card className="results-card">
+          <div className="card-header">
+            <div>
+              <p className="eyebrow">Candidate ranking</p>
+              <h3>Evidence-backed matches</h3>
+            </div>
+            <Badge tone={candidates.length > 0 ? "success" : "default"}>
+              {candidates.length > 0 ? "Review ready" : "No results yet"}
+            </Badge>
+          </div>
+          <div className="candidate-list">
+            {candidates.length > 0 ? (
+              candidates.map((candidate) => (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  className={`candidate-row ${
+                    selectedCandidate?.id === candidate.id ? "candidate-row-active" : ""
+                  }`}
+                  onClick={() => setSelectedCandidateId(candidate.id)}
+                >
+                  <div>
+                    <strong>{candidate.name}</strong>
+                    <small>{candidate.title}</small>
+                  </div>
+                  <ScoreRing score={candidate.score} />
+                  <Badge tone={candidate.score >= 85 ? "success" : "warning"}>{candidate.status}</Badge>
+                </button>
+              ))
+            ) : (
+              <EmptyState title="No candidate analysis yet" description="Add a CV and target role, then run match analysis." />
+            )}
+          </div>
+        </Card>
+
+        <Card className="detail-card">
+          {selectedCandidate ? (
+            <>
+              <div className="card-header">
+                <div>
+                  <p className="eyebrow">Match evidence</p>
+                  <h3>{selectedCandidate.name}</h3>
+                </div>
+                <Badge tone="info">{confidenceLabel(selectedCandidate.score)}</Badge>
+              </div>
+              <p className="large-summary">{selectedCandidate.summary}</p>
+              <div className="evidence-grid">
+                <EvidenceList title="Supporting evidence" items={selectedCandidate.evidence} tone="success" />
+                <EvidenceList title="Gaps to review" items={selectedCandidate.gaps} tone="warning" />
+              </div>
+              <div className="dispatch-note">
+                <Send size={18} aria-hidden="true" />
+                <div>
+                  <strong>Recommended dispatch</strong>
+                  <p>{selectedCandidate.decision}</p>
+                </div>
+              </div>
+              <div className="button-row">
+                <Button onClick={() => onAction(`${selectedCandidate.name} marked ready for hiring manager review.`)}>
+                  Mark ready
+                </Button>
+                <Button variant="secondary" onClick={() => onAction("Dispatch note copied to review queue.")}>
+                  Copy note
+                </Button>
+              </div>
+            </>
+          ) : (
+            <EmptyState title="No match selected" description="Run match analysis to inspect evidence and gaps." />
+          )}
+        </Card>
+      </section>
+    </div>
+  );
+}
+
+function CrmAnalyzer({
+  deals,
+  pipeline,
+  selectedDeal,
+  setSelectedDealId,
+  crmFileName,
+  crmCsvText,
+  setCrmCsvText,
+  onCrmFile,
+  runCrmAnalysis,
+  isRunning,
+  onAction,
+}: {
+  deals: Deal[];
+  pipeline: Array<{ stage: string; value: number; stalled: number }>;
+  selectedDeal: Deal | null;
+  setSelectedDealId: (id: string) => void;
+  crmFileName: string;
+  crmCsvText: string;
+  setCrmCsvText: (value: string) => void;
+  onCrmFile: (file: File) => Promise<void>;
+  runCrmAnalysis: () => void;
+  isRunning: boolean;
+  onAction: (message: string) => void;
+}) {
+  return (
+    <div className="content-stack">
+      <WorkflowSummary
+        title="CRM Pipeline Optimizer"
+        status="CSV mapped"
+        steps={["Import CRM", "Confirm fields", "Review follow-ups"]}
+      />
+      <section className="split-grid split-grid-narrow">
+        <Card className="input-panel">
+          <PanelTitle
+            eyebrow="Import"
+            title="CRM data source"
+            icon={Database}
+            helper="Start with a CRM export, then confirm the fields to analyze."
+          />
+          <FileDrop
+            label="CRM export"
+            helper="HubSpot, Pipedrive, Salesforce, or Zoho CSV"
+            fileName={crmFileName}
+            onFile={onCrmFile}
+            accept=".csv,.tsv,.txt"
+          />
+          <label className="field">
+            <span>
+              Paste CRM CSV <small>required when no CSV file is uploaded</small>
+            </span>
+            <textarea
+              rows={6}
+              value={crmCsvText}
+              onChange={(event) => setCrmCsvText(event.target.value)}
+              placeholder="company,owner,stage,value,last activity,next step&#10;Northstar Talent,A. Martin,Negotiation,42000,21 days,"
+            />
+          </label>
+          <div className="mapping-grid">
+            {["Company", "Owner", "Stage", "Value", "Last activity", "Next step"].map((field) => (
+              <label className="field compact-field" key={field}>
+                <span>{field}</span>
+                <select defaultValue={field}>
+                  <option>{field}</option>
+                  <option>Custom field</option>
+                  <option>Not available</option>
+                </select>
+              </label>
+            ))}
+          </div>
+          <label className="field">
+            <span>Date range</span>
+            <select defaultValue="Last 90 days">
+              <option>Last 30 days</option>
+              <option>Last 90 days</option>
+              <option>This quarter</option>
+              <option>All open deals</option>
+            </select>
+          </label>
+          <Button className="full-button" onClick={runCrmAnalysis} disabled={isRunning}>
+            <PlayCircle size={16} aria-hidden="true" />
+            {isRunning ? "Checking pipeline..." : "Run pipeline analysis"}
+          </Button>
+        </Card>
+
+        <Card>
+          <div className="metric-grid metric-grid-two">
+            <Metric label="Active pipeline" value={summarizePipelineValue(deals)} helper={`${deals.length} open deals`} tone="info" />
+            <Metric label="Needs action" value={String(deals.filter((deal) => deal.risk !== "Low").length)} helper="Owner follow-up required" tone="warning" />
+            <Metric label="High risk" value={String(deals.filter((deal) => deal.risk === "High").length)} helper="Review before forecast" tone="danger" />
+            <Metric label="Low risk" value={String(deals.filter((deal) => deal.risk === "Low").length)} helper="Ready to progress" tone="success" />
+          </div>
+          <div className="chart-wrap chart-wrap-small">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={pipeline}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.grid} />
+                <XAxis dataKey="stage" tickLine={false} axisLine={false} fontSize={12} />
+                <YAxis tickLine={false} axisLine={false} fontSize={12} />
+                <Tooltip cursor={{ fill: chartColors.cursor }} />
+                <Bar dataKey="value" name="Open deals" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="stalled" name="Needs action" fill={chartColors.secondary} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      </section>
+
+      <section className="dashboard-grid dashboard-grid-wide">
+        <Card>
+          <div className="card-header">
+            <div>
+              <p className="eyebrow">Deals needing action</p>
+              <h3>Prioritized by business risk</h3>
+            </div>
+            <Badge tone={deals.length > 0 ? "warning" : "default"}>
+              {deals.filter((deal) => deal.risk !== "Low").length} actions found
+            </Badge>
+          </div>
+          {deals.length > 0 ? (
+            <DataTable
+              headers={["Company", "Stage", "Owner", "Value", "Risk", "Action"]}
+              rows={deals.map((deal) => [
+                <button className="table-link" type="button" onClick={() => setSelectedDealId(deal.id)}>
+                  {deal.company}
+                </button>,
+                deal.stage,
+                deal.owner,
+                deal.value,
+                <Badge tone={deal.risk === "High" ? "danger" : deal.risk === "Medium" ? "warning" : "success"}>
+                  {deal.risk}
+                </Badge>,
+                deal.action,
+              ])}
+            />
+          ) : (
+            <EmptyState title="No CRM analysis yet" description="Upload or paste a CRM CSV, then run pipeline analysis." />
+          )}
+        </Card>
+        <Card className="detail-card">
+          {selectedDeal ? (
+            <>
+              <div className="card-header">
+                <div>
+                  <p className="eyebrow">Recommended next step</p>
+                  <h3>{selectedDeal.company}</h3>
+                </div>
+                <Badge tone={selectedDeal.risk === "High" ? "danger" : "warning"}>{selectedDeal.risk} risk</Badge>
+              </div>
+              <dl className="compact-list">
+                <div>
+                  <dt>Stage</dt>
+                  <dd>{selectedDeal.stage}</dd>
+                </div>
+                <div>
+                  <dt>Expected value</dt>
+                  <dd>{selectedDeal.value}</dd>
+                </div>
+                <div>
+                  <dt>Last activity</dt>
+                  <dd>{selectedDeal.lastActivity} ago</dd>
+                </div>
+                <div>
+                  <dt>Close probability</dt>
+                  <dd>{selectedDeal.probability}%</dd>
+                </div>
+              </dl>
+              <div className="dispatch-note amber-note">
+                <AlertTriangle size={18} aria-hidden="true" />
+                <div>
+                  <strong>Action to take</strong>
+                  <p>{selectedDeal.action}</p>
+                </div>
+              </div>
+              <div className="button-row">
+                <Button onClick={() => onAction(`${selectedDeal.company} follow-up added to owner queue.`)}>
+                  Add follow-up
+                </Button>
+                <Button variant="secondary" onClick={() => onAction(`${selectedDeal.company} marked reviewed.`)}>
+                  Mark reviewed
+                </Button>
+              </div>
+            </>
+          ) : (
+            <EmptyState title="No deal selected" description="Run a CRM analysis to inspect prioritized next steps." />
+          )}
+        </Card>
+      </section>
+    </div>
+  );
+}
+
+function ProspectTool({
+  prospects,
+  selectedProspect,
+  setSelectedProspectId,
+  prospectFileName,
+  icpText,
+  setIcpText,
+  prospectSourceText,
+  setProspectSourceText,
+  manualProspectUrl,
+  setManualProspectUrl,
+  onProspectFile,
+  onCaptureProspect,
+  runProspectQualification,
+  isRunning,
+  onAction,
+}: {
+  prospects: Prospect[];
+  selectedProspect: Prospect | null;
+  setSelectedProspectId: (id: string) => void;
+  prospectFileName: string;
+  icpText: string;
+  setIcpText: (value: string) => void;
+  prospectSourceText: string;
+  setProspectSourceText: (value: string) => void;
+  manualProspectUrl: string;
+  setManualProspectUrl: (value: string) => void;
+  onProspectFile: (file: File) => Promise<void>;
+  onCaptureProspect: (prospect: Prospect) => Promise<void>;
+  runProspectQualification: () => void;
+  isRunning: boolean;
+  onAction: (message: string) => void;
+}) {
+  return (
+    <div className="content-stack">
+      <WorkflowSummary
+        title="Prospect Qualification"
+        status="Sources ready"
+        steps={["Define ICP", "Import sources", "Approve capture"]}
+      />
+      <section className="split-grid">
+        <Card className="input-panel">
+          <PanelTitle
+            eyebrow="ICP"
+            title="Define target customer"
+            icon={Target}
+            helper="Turn a broad prospect list into scored, review-ready leads."
+          />
+          <label className="field">
+            <span>
+              Ideal customer profile <small>required</small>
+            </span>
+            <textarea
+              rows={7}
+              value={icpText}
+              onChange={(event) => setIcpText(event.target.value)}
+              placeholder="B2B recruiting agencies, HR SaaS teams, and RevOps leaders with active hiring needs, CRM cleanup pain, or automation projects."
+            />
+          </label>
+          <div className="chip-row">
+            <Badge tone="info">Recruiting</Badge>
+            <Badge tone="success">HubSpot or Pipedrive</Badge>
+            <Badge tone="warning">Active hiring signal</Badge>
+          </div>
+        </Card>
+        <Card className="input-panel">
+          <PanelTitle
+            eyebrow="Sources"
+            title="Import prospects"
+            icon={Users}
+            helper="Use a CSV, company list, or a manual company/profile URL."
+          />
+          <FileDrop
+            label="Prospect source"
+            helper="CSV, LinkedIn export, company list, or research notes"
+            fileName={prospectFileName}
+            onFile={onProspectFile}
+            accept=".csv,.txt,.md"
+          />
+          <label className="field">
+            <span>Paste prospect source</span>
+            <textarea
+              rows={5}
+              value={prospectSourceText}
+              onChange={(event) => setProspectSourceText(event.target.value)}
+              placeholder="name,title,company,email,source&#10;Camille Roux,Head of Talent,ScaleWorks,camille@example.com,LinkedIn"
+            />
+          </label>
+          <label className="field">
+            <span>Manual company or profile URL</span>
+            <input
+              value={manualProspectUrl}
+              onChange={(event) => setManualProspectUrl(event.target.value)}
+              placeholder="https://example.com/company/scaleworks"
+            />
+          </label>
+          <Button className="full-button" onClick={runProspectQualification} disabled={isRunning}>
+            <PlayCircle size={16} aria-hidden="true" />
+            {isRunning ? "Scoring prospects..." : "Run prospect qualification"}
+          </Button>
+        </Card>
+      </section>
+
+      <section className="dashboard-grid dashboard-grid-wide">
+        <Card>
+          <div className="card-header">
+            <div>
+              <p className="eyebrow">Qualification results</p>
+              <h3>Capture-ready prospects</h3>
+            </div>
+            <Badge tone={prospects.length > 0 ? "success" : "default"}>
+              {prospects.filter((prospect) => prospect.status === "Capture now").length} ready
+            </Badge>
+          </div>
+          {prospects.length > 0 ? (
+            <DataTable
+              headers={["Prospect", "Company", "Source", "Fit", "Status", "Next action"]}
+              rows={prospects.map((prospect) => [
+                <button className="table-link" type="button" onClick={() => setSelectedProspectId(prospect.id)}>
+                  {prospect.name}
+                </button>,
+                prospect.company,
+                prospect.source,
+                <ScorePill score={prospect.fit} />,
+                <Badge tone={prospect.fit >= 90 ? "success" : prospect.fit >= 80 ? "warning" : "default"}>
+                  {prospect.status}
+                </Badge>,
+                prospect.nextAction,
+              ])}
+            />
+          ) : (
+            <EmptyState title="No prospects scored yet" description="Define the ICP, add a source, then run qualification." />
+          )}
+        </Card>
+        <Card className="detail-card">
+          {selectedProspect ? (
+            <>
+              <div className="card-header">
+                <div>
+                  <p className="eyebrow">Lead analysis</p>
+                  <h3>{selectedProspect.name}</h3>
+                </div>
+                <Badge tone={selectedProspect.fit >= 90 ? "success" : "warning"}>{selectedProspect.fit}% fit</Badge>
+              </div>
+              <dl className="compact-list">
+                <div>
+                  <dt>Role</dt>
+                  <dd>{selectedProspect.title}</dd>
+                </div>
+                <div>
+                  <dt>Company</dt>
+                  <dd>{selectedProspect.company}</dd>
+                </div>
+                <div>
+                  <dt>Source</dt>
+                  <dd>{selectedProspect.source}</dd>
+                </div>
+                <div>
+                  <dt>Email</dt>
+                  <dd>{selectedProspect.email || "Missing"}</dd>
+                </div>
+              </dl>
+              <p className="large-summary">{selectedProspect.reason}</p>
+              <div className="outreach-box">
+                <Mail size={18} aria-hidden="true" />
+                <div>
+                  <strong>Outreach angle</strong>
+                  <p>{selectedProspect.nextAction}</p>
+                </div>
+              </div>
+              <Button
+                className="full-button"
+                onClick={() => {
+                  void onCaptureProspect(selectedProspect);
+                  onAction(`${selectedProspect.name} sent to the capture review queue.`);
+                }}
+              >
+                <Database size={16} aria-hidden="true" />
+                Capture to CRM after review
+              </Button>
+            </>
+          ) : (
+            <EmptyState title="No prospect selected" description="Run qualification to inspect fit scores and outreach angles." />
+          )}
+        </Card>
+      </section>
+    </div>
+  );
+}
+
+function ActivityLogs({
+  logs,
+  selectedLog,
+  setSelectedLogId,
+  onAction,
+}: {
+  logs: RunLog[];
+  selectedLog: RunLog | null;
+  setSelectedLogId: (id: string) => void;
+  onAction: (message: string) => void;
+}) {
+  return (
+    <div className="content-stack">
+      <section className="toolbar-card">
+        <div className="filter-group">
+          <label className="field compact-field">
+            <span>Workflow</span>
+            <select defaultValue="All activities">
+              <option>All activities</option>
+              <option>CV Match</option>
+              <option>CRM Analysis</option>
+              <option>Prospect Qualification</option>
+            </select>
+          </label>
+          <label className="field compact-field">
+            <span>Review status</span>
+            <select defaultValue="All statuses">
+              <option>All statuses</option>
+              <option>Ready to review</option>
+              <option>Needs review</option>
+              <option>Issue found</option>
+            </select>
+          </label>
+        </div>
+        <div className="button-row">
+          <Button variant="secondary" onClick={() => onAction("Activity list refreshed.")}>
+            <RefreshCw size={16} aria-hidden="true" />
+            Refresh
+          </Button>
+          <Button onClick={() => onAction("Evidence export prepared for the selected review item.")}>
+            <Download size={16} aria-hidden="true" />
+            Export evidence
+          </Button>
+        </div>
+      </section>
+
+      <section className="dashboard-grid dashboard-grid-wide">
+        <Card>
+          <div className="card-header">
+            <div>
+              <p className="eyebrow">Run history</p>
+              <h3>Business-readable trace</h3>
+            </div>
+            <Badge tone="info">{logs.length} runs</Badge>
+          </div>
+          {logs.length > 0 ? (
+            <DataTable
+              headers={["Workflow", "Started", "Input", "Result", "Quality", "Review"]}
+              rows={logs.map((log) => [
+                <button className="table-link" type="button" onClick={() => setSelectedLogId(log.id)}>
+                  {log.workflow}
+                </button>,
+                log.started,
+                log.input,
+                log.result,
+                <Badge tone={qualityTone(log.quality) as Tone}>{log.quality}</Badge>,
+                <Badge tone={log.status === "Needs review" ? "warning" : "success"}>{log.status}</Badge>,
+              ])}
+            />
+          ) : (
+            <EmptyState title="No workflow runs yet" description="Run CV, CRM, or prospect analysis to create the first trace record." />
+          )}
+        </Card>
+
+        <Card className="detail-card">
+          {selectedLog ? (
+            <>
+              <div className="card-header">
+                <div>
+                  <p className="eyebrow">Analysis detail</p>
+                  <h3>{selectedLog.workflow}</h3>
+                </div>
+                <Badge tone={selectedLog.status === "Needs review" ? "warning" : "success"}>
+                  {selectedLog.status}
+                </Badge>
+              </div>
+              <p className="large-summary">{selectedLog.details}</p>
+              <EvidenceList title="Evidence used" items={selectedLog.evidence} tone="success" />
+              <EvidenceList title="Data sources" items={selectedLog.dataUsed} tone="info" />
+              <div className="dispatch-note">
+                <ShieldCheck size={18} aria-hidden="true" />
+                <div>
+                  <strong>{selectedLog.quality}</strong>
+                  <p>Stored with input summary, evidence, and review status.</p>
+                </div>
+              </div>
+              <details className="technical-details">
+                <summary>Review details</summary>
+                <dl className="compact-list">
+                  <div>
+                    <dt>Review record</dt>
+                    <dd>{selectedLog.id}</dd>
+                  </div>
+                  <div>
+                    <dt>Data used</dt>
+                    <dd>{selectedLog.dataUsed.join(", ")}</dd>
+                  </div>
+                </dl>
+              </details>
+            </>
+          ) : (
+            <EmptyState title="No analysis selected" description="Completed workflows will show provider, evidence, and review status here." />
+          )}
+        </Card>
+      </section>
+    </div>
+  );
+}
+
+function SettingsScreen({
+  providerId,
+  setProviderId,
+  selectedProvider,
+}: {
+  providerId: string;
+  setProviderId: (id: string) => void;
+  selectedProvider: { id: string; label: string; baseUrl: string; model: string; note: string };
+}) {
+  return (
+    <div className="content-stack">
+      <section className="dashboard-grid dashboard-grid-wide">
+        <Card>
+          <div className="card-header">
+            <div>
+              <p className="eyebrow">Analysis engine</p>
+              <h3>Provider selection</h3>
+            </div>
+            <Settings size={20} aria-hidden="true" />
+          </div>
+          <div className="provider-list">
+            {providerPresets.map((provider) => (
+              <button
+                key={provider.id}
+                type="button"
+                className={`provider-option ${providerId === provider.id ? "provider-option-active" : ""}`}
+                onClick={() => setProviderId(provider.id)}
+              >
+                <span>
+                  <strong>{provider.label}</strong>
+                  <small>{provider.note}</small>
+                </span>
+                <Badge tone={providerId === provider.id ? "success" : "default"}>
+                  {providerId === provider.id ? "Selected" : "Available"}
+                </Badge>
+              </button>
+            ))}
+          </div>
+        </Card>
+        <Card className="detail-card">
+          <div className="card-header">
+            <div>
+              <p className="eyebrow">Engine details</p>
+              <h3>{selectedProvider.label}</h3>
+            </div>
+            <ShieldCheck size={20} aria-hidden="true" />
+          </div>
+          <dl className="compact-list">
+            <div>
+              <dt>Base URL</dt>
+              <dd>{selectedProvider.baseUrl}</dd>
+            </div>
+            <div>
+              <dt>Model</dt>
+              <dd>{selectedProvider.model}</dd>
+            </div>
+            <div>
+              <dt>Runtime contract</dt>
+              <dd>{describeGateway(selectedProvider)}</dd>
+            </div>
+            <div>
+              <dt>Review mode</dt>
+              <dd>Human approval required</dd>
+            </div>
+          </dl>
+        </Card>
+      </section>
+      <Card>
+        <div className="card-header">
+          <div>
+            <p className="eyebrow">Data handling</p>
+            <h3>Workspace controls</h3>
+          </div>
+          <Database size={20} aria-hidden="true" />
+        </div>
+        <div className="settings-grid">
+          <SettingToggle title="Require review before CRM capture" description="Keep human approval on for prospect exports." checked />
+          <SettingToggle title="Store file summaries only" description="Avoid saving full CV or CRM source text in activity records." checked />
+          <SettingToggle title="Show only approved captures" description="Keep CRM export actions behind review." checked />
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function SettingToggle({
+  title,
+  description,
+  checked,
+}: {
+  title: string;
+  description: string;
+  checked: boolean;
+}) {
+  const [enabled, setEnabled] = useState(checked);
+
+  return (
+    <button
+      className="setting-toggle"
+      type="button"
+      aria-pressed={enabled}
+      onClick={() => setEnabled((value) => !value)}
+    >
+      <span>
+        <strong>{title}</strong>
+        <small>{description}</small>
+      </span>
+      <span className={`toggle-control ${enabled ? "toggle-control-on" : ""}`} aria-hidden="true" />
+    </button>
+  );
+}
+
+function WorkflowSummary({
+  title,
+  status,
+  steps,
+}: {
+  title: string;
+  status: string;
+  steps: string[];
+}) {
+  return (
+    <Card className="workflow-summary">
+      <div>
+        <p className="eyebrow">Workflow</p>
+        <h2>{title}</h2>
+        <p>{status}</p>
+      </div>
+      <div className="workflow-steps">
+        {steps.map((step, index) => (
+          <span key={step}>
+            <strong>{String(index + 1).padStart(2, "0")}</strong>
+            {step}
+          </span>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function PanelTitle({
+  eyebrow,
+  title,
+  helper,
+  icon: Icon,
+}: {
+  eyebrow: string;
+  title: string;
+  helper: string;
+  icon: typeof UploadCloud;
+}) {
+  return (
+    <div className="panel-title">
+      <div className="workflow-icon">
+        <Icon size={20} aria-hidden="true" />
+      </div>
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h3>{title}</h3>
+        <p>{helper}</p>
+      </div>
+    </div>
+  );
+}
+
+function FileDrop({
+  label,
+  helper,
+  fileName,
+  onFile,
+  accept,
+}: {
+  label: string;
+  helper: string;
+  fileName: string;
+  onFile: (file: File) => Promise<void>;
+  accept: string;
+}) {
+  return (
+    <label className="file-drop">
+      <UploadCloud size={24} aria-hidden="true" />
+      <span>
+        <strong>{label}</strong>
+        <small>{helper}</small>
+      </span>
+      <input
+        type="file"
+        accept={accept}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void onFile(file);
+        }}
+      />
+      <em>{fileName || "No file selected"}</em>
+    </label>
+  );
+}
+
+function EmptyState({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="empty-state">
+      <strong>{title}</strong>
+      <p>{description}</p>
+    </div>
+  );
+}
+
+function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <article className={`card ${className}`}>{children}</article>;
+}
+
+function Button({
+  children,
+  onClick,
+  variant = "primary",
+  className = "",
+  disabled = false,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  variant?: "primary" | "secondary";
+  className?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      className={`button button-${variant} ${className}`}
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-busy={disabled || undefined}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Badge({ children, tone = "default" }: { children: React.ReactNode; tone?: Tone }) {
+  return <span className={`badge badge-${tone}`}>{children}</span>;
+}
+
+function Metric({
+  label,
+  value,
+  helper,
+  tone,
+}: {
+  label: string;
+  value: string;
+  helper: string;
+  tone: Tone;
+}) {
+  return (
+    <div className={`metric metric-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{helper}</small>
+    </div>
+  );
+}
+
+function ScoreRing({ score }: { score: number }) {
+  return (
+    <span
+      className="score-ring"
+      style={{ "--score": `${score * 3.6}deg` } as React.CSSProperties}
+      aria-label={`${score}% score`}
+    >
+      {score}
+    </span>
+  );
+}
+
+function ScorePill({ score }: { score: number }) {
+  return <span className="score-pill">{score}%</span>;
+}
+
+function EvidenceList({ title, items, tone }: { title: string; items: string[]; tone: Tone }) {
+  const Icon = tone === "warning" ? AlertTriangle : CheckCircle2;
+  return (
+    <div className="evidence-list">
+      <h4>{title}</h4>
+      {items.map((item) => (
+        <div className="evidence-item" key={item}>
+          <Icon size={16} aria-hidden="true" />
+          <span>{item}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DataTable({
+  headers,
+  rows,
+}: {
+  headers: string[];
+  rows: Array<Array<React.ReactNode>>;
+}) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            {headers.map((header) => (
+              <th key={header}>{header}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={`row-${rowIndex}`}>
+              {row.map((cell, cellIndex) => (
+                <td key={`cell-${rowIndex}-${cellIndex}`}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function buildPipelineFromDeals(deals: Deal[]) {
+  const stages = ["New", "Qualified", "Proposal", "Negotiation", "Won"].map((stage) => ({
+    stage,
+    value: 0,
+    stalled: 0,
+  }));
+  const byStage = new Map(stages.map((stage) => [stage.stage.toLowerCase(), stage]));
+
+  deals.forEach((deal) => {
+    const key = deal.stage.toLowerCase();
+    const point = byStage.get(key) ?? { stage: deal.stage, value: 0, stalled: 0 };
+    point.value += 1;
+    if (deal.risk !== "Low") point.stalled += 1;
+    byStage.set(key, point);
+  });
+
+  return [...byStage.values()];
+}
+
+function summarizeRevenueAtRisk(deals: Deal[]) {
+  const total = deals
+    .filter((deal) => deal.risk !== "Low")
+    .reduce((sum, deal) => sum + parseMoney(deal.value), 0);
+
+  return formatMoney(total);
+}
+
+function summarizePipelineValue(deals: Deal[]) {
+  return formatMoney(deals.reduce((sum, deal) => sum + parseMoney(deal.value), 0));
+}
+
+function parseMoney(value: string) {
+  const numeric = Number(value.replace(/[^\d.-]/g, ""));
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function formatMoney(value: number) {
+  if (value >= 1000) return `EUR ${Math.round(value / 1000)}k`;
+  return `EUR ${Math.round(value)}`;
+}
+
+function readTextFile(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
+    reader.addEventListener("error", () => reject(new Error(`Could not read ${file.name}.`)));
+    reader.readAsText(file);
+  });
+}
+
+export default App;
