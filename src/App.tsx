@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type DragEvent } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -1383,6 +1383,7 @@ function FileDrop({
   helper,
   fileName,
   onFile,
+  accept,
 }: {
   label: string;
   helper: string;
@@ -1391,12 +1392,37 @@ function FileDrop({
   accept: string;
 }) {
   const [isDragging, setIsDragging] = useState(false);
+  const [isReading, setIsReading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function processFile(file: File | undefined) {
+    if (!file) {
+      setError("No readable file detected.");
+      return;
+    }
+
+    setError("");
+    setIsReading(true);
+    try {
+      await onFile(file);
+    } catch {
+      setError("Could not read this file. Paste the content below instead.");
+    } finally {
+      setIsReading(false);
+    }
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    void processFile(file);
+    event.currentTarget.value = "";
+  }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
     const file = event.dataTransfer.files?.[0];
-    if (file) void onFile(file);
+    void processFile(file);
   }
 
   return (
@@ -1410,15 +1436,25 @@ function FileDrop({
       onDragLeave={() => setIsDragging(false)}
       onDrop={handleDrop}
     >
-      <span>
-        <strong>{label}</strong>
-        <small>{helper}</small>
-      </span>
-      <em>{fileName || "No file attached"}</em>
-      <span className="file-picker-action">
-        <UploadCloud size={16} aria-hidden="true" />
-        Drop file
-      </span>
+      <div className="file-picker-main">
+        <span>
+          <strong>{label}</strong>
+          <small>{helper}</small>
+        </span>
+        <em>{isReading ? "Reading file..." : fileName || "No file attached"}</em>
+        <span className="file-picker-action">
+          <UploadCloud size={16} aria-hidden="true" />
+          Drop here
+        </span>
+      </div>
+      <input
+        className="file-picker-native"
+        type="file"
+        accept={accept}
+        disabled={isReading}
+        onChange={handleFileChange}
+      />
+      {error ? <small className="file-picker-error">{error}</small> : null}
     </div>
   );
 }

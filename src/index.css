@@ -925,9 +925,9 @@ textarea:focus-visible {
 .file-picker {
   position: relative;
   display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: center;
-  justify-content: space-between;
+  align-items: stretch;
   min-height: 58px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -945,6 +945,13 @@ textarea:focus-visible {
 .file-picker-active {
   border-color: rgba(37, 95, 77, 0.34);
   background: #fbfcf7;
+}
+
+.file-picker-main {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .file-picker strong,
@@ -977,6 +984,42 @@ textarea:focus-visible {
   font-size: 12px;
   font-weight: 850;
   white-space: nowrap;
+}
+
+.file-picker-native {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  padding: 7px;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.file-picker-native::file-selector-button {
+  margin-right: 10px;
+  border: 1px solid rgba(37, 95, 77, 0.22);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--blue);
+  padding: 7px 10px;
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.file-picker-native:disabled,
+.file-picker-native:disabled::file-selector-button {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.file-picker-error {
+  color: var(--rose);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .file-picker em {
