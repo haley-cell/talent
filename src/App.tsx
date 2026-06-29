@@ -1439,13 +1439,9 @@ function FileDrop({
       <div className="file-picker-main">
         <span>
           <strong>{label}</strong>
-          <small>{helper}</small>
+          <small>{helper}. Choose a file below or drop it onto this panel.</small>
         </span>
         <em>{isReading ? "Reading file..." : fileName || "No file attached"}</em>
-        <span className="file-picker-action">
-          <UploadCloud size={16} aria-hidden="true" />
-          Drop here
-        </span>
       </div>
       <input
         className="file-picker-native"
