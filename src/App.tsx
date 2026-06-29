@@ -8,10 +8,8 @@ import {
   Database,
   Download,
   FileText,
-  Filter,
   History,
   Layers3,
-  LineChart,
   Mail,
   PlayCircle,
   RefreshCw,
@@ -335,7 +333,6 @@ function App() {
         <TopBar
           activeView={activeView}
           notice={notice}
-          setActiveView={setActiveView}
         />
         <section id="main-content" className="page-scroll" aria-live="polite" tabIndex={-1}>
           {activeView === "command" && (
@@ -496,11 +493,9 @@ function NavButton({
 function TopBar({
   activeView,
   notice,
-  setActiveView,
 }: {
   activeView: View;
   notice: string;
-  setActiveView: (view: View) => void;
 }) {
   const titles: Record<View, string> = {
     command: "Operations Desk",
@@ -517,18 +512,14 @@ function TopBar({
         <p className="eyebrow">Recruiting and growth operations</p>
         <h1>{titles[activeView]}</h1>
       </div>
-      <div className="topbar-actions">
-        <button className="pill-button" type="button" onClick={() => setActiveView("logs")}>
-          <ClipboardCheck size={16} aria-hidden="true" />
-          Review queue
-        </button>
-        {notice ? (
+      {notice ? (
+        <div className="topbar-actions">
           <div className="operator-card" title={notice} role="status">
             <CheckCircle2 size={16} aria-hidden="true" />
             <span>{notice}</span>
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </header>
   );
 }
@@ -540,12 +531,6 @@ function CommandCenter({
   deals,
   prospects,
   metrics,
-  pipeline,
-  runCvAnalysis,
-  runCrmAnalysis,
-  runProspectQualification,
-  runningWorkflow,
-  onAction,
 }: {
   setActiveView: (view: View) => void;
   logs: RunLog[];
@@ -561,213 +546,86 @@ function CommandCenter({
     prospectsReady: number;
     reviewCount: number;
   };
-  pipeline: Array<{ stage: string; value: number; stalled: number }>;
-  runCvAnalysis: () => void;
-  runCrmAnalysis: () => void;
-  runProspectQualification: () => void;
-  runningWorkflow: RunningWorkflow;
-  onAction: (message: string) => void;
 }) {
-  const boardColumns: Array<{
-    title: string;
-    count: number;
-    meta: string;
-    accent: Tone;
-    empty: string;
-    items: BoardItem[];
-  }> = [
+  const workstreams = [
     {
       title: "Candidate review",
-      count: candidates.length,
-      meta: `${metrics.topMatches} top matches`,
-      accent: "info" as Tone,
-      empty: "No CV runs yet",
-      items: candidates.slice(0, 4).map((candidate) => ({
-        id: candidate.id,
-        title: candidate.name,
-        subtitle: candidate.title,
-        score: candidate.score,
-        tag: candidate.status,
-        detail: candidate.decision,
-        view: "cv" as View,
-      })),
+      description: "Compare one CV against one target role.",
+      result: `${metrics.cvReady} analyses, ${metrics.topMatches} strong matches`,
+      detail: candidates[0]?.decision ?? "Add a CV and role to produce the first recommendation.",
+      badge: metrics.cvReady,
+      tone: "info" as Tone,
+      icon: FileText,
+      view: "cv" as View,
+      action: "Open",
     },
     {
-      title: "CRM actions",
-      count: deals.filter((deal) => deal.risk !== "Low").length,
-      meta: `${metrics.revenueAtRisk} at risk`,
-      accent: "warning" as Tone,
-      empty: "No CRM actions yet",
-      items: deals.slice(0, 4).map((deal) => ({
-        id: deal.id,
-        title: deal.company,
-        subtitle: `${deal.owner} · ${deal.stage}`,
-        score: deal.probability,
-        tag: `${deal.risk} risk`,
-        detail: deal.action,
-        value: deal.value,
-        view: "crm" as View,
-      })),
+      title: "CRM analysis",
+      description: "Find stalled deals and owner-level next steps.",
+      result: `${metrics.dealsNeedingAction} actions, ${metrics.revenueAtRisk} at risk`,
+      detail: deals[0]?.action ?? "Paste a CRM export to surface revenue actions.",
+      badge: metrics.dealsNeedingAction,
+      tone: "warning" as Tone,
+      icon: Database,
+      view: "crm" as View,
+      action: "Open",
     },
     {
-      title: "Lead capture",
-      count: prospects.length,
-      meta: `${metrics.prospectsReady} capture-ready`,
-      accent: "success" as Tone,
-      empty: "No prospects scored yet",
-      items: prospects.slice(0, 4).map((prospect) => ({
-        id: prospect.id,
-        title: prospect.name,
-        subtitle: prospect.company,
-        score: prospect.fit,
-        tag: prospect.status,
-        detail: prospect.nextAction,
-        view: "prospects" as View,
-      })),
-    },
-    {
-      title: "Review queue",
-      count: logs.length,
-      meta: `${metrics.reviewCount} pending`,
-      accent: metrics.reviewCount > 0 ? "warning" as Tone : "info" as Tone,
-      empty: "No review records yet",
-      items: logs.slice(0, 4).map((log) => ({
-        id: log.id,
-        title: log.workflow,
-        subtitle: log.input,
-        tag: log.status,
-        detail: log.result,
-        view: "logs" as View,
-      })),
+      title: "Lead qualification",
+      description: "Score prospects against the ICP before capture.",
+      result: `${metrics.prospectsToReview} scored, ${metrics.prospectsReady} ready`,
+      detail: prospects[0]?.nextAction ?? "Add an ICP and source list to create the first lead score.",
+      badge: metrics.prospectsReady,
+      tone: "success" as Tone,
+      icon: Target,
+      view: "prospects" as View,
+      action: "Open",
     },
   ];
 
   return (
     <div className="content-stack operations-workbench">
-      <section className="metric-strip board-metrics" aria-label="Workspace metrics">
-        <Metric label="CVs ready" value={String(metrics.cvReady)} helper={`${metrics.topMatches} top matches`} tone="info" />
-        <Metric label="Deal follow-ups" value={String(metrics.dealsNeedingAction)} helper={`${metrics.revenueAtRisk} at risk`} tone="warning" />
-        <Metric label="Prospects" value={String(metrics.prospectsToReview)} helper={`${metrics.prospectsReady} capture-ready`} tone="success" />
-        <Metric label="Review queue" value={String(metrics.reviewCount)} helper="awaiting human decision" tone="strong" />
-      </section>
-
-      <section className="operator-layout">
-        <div className="board-panel" aria-label="Operations board">
-          {boardColumns.map((column) => (
-            <div className={`board-column board-column-${column.accent}`} key={column.title}>
-              <div className="board-column-header">
-                <span>
-                  <strong>{column.title}</strong>
-                  <small>{column.meta}</small>
-                </span>
-                <Badge tone={column.accent}>{column.count}</Badge>
-              </div>
-              <div className="board-card-list">
-                {column.items.length > 0 ? (
-                  column.items.map((item) => (
-                    <button className="board-card" key={item.id} type="button" onClick={() => setActiveView(item.view)}>
-                      <span className="board-card-main">
-                        <strong>{item.title}</strong>
-                        <small>{item.subtitle}</small>
-                      </span>
-                      <span className="board-card-score">
-                        {typeof item.score === "number" ? item.score : item.tag}
-                      </span>
-                      <span className="board-card-detail">{item.detail}</span>
-                      {item.value ? <span className="board-card-value">{item.value}</span> : null}
-                    </button>
-                  ))
-                ) : (
-                  <div className="board-empty">{column.empty}</div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <aside className="run-panel" aria-label="Run workflows">
-          <div className="run-panel-header">
-            <span className="run-dot" aria-hidden="true" />
+      <section className="ops-command-layout">
+        <Card className="ops-command-card">
+          <div className="ops-command-header">
             <div>
-              <p className="eyebrow">Run desk</p>
-              <h2>Start a workflow</h2>
+              <p className="eyebrow">Operations</p>
+              <h2>Choose the work to run</h2>
             </div>
+            <Badge tone={metrics.reviewCount > 0 ? "warning" : "default"}>{metrics.reviewCount} reviews</Badge>
           </div>
-          <WorkflowStartCard
-            icon={FileText}
-            title="Match a CV"
-            description="Add a candidate and target role."
-            inputLabel="Candidate + role"
-            inputHint="CV text and job target"
-            buttonLabel="Find match"
-            runningLabel="Analyzing..."
-            isRunning={runningWorkflow === "cv"}
-            onOpen={() => setActiveView("cv")}
-            onRun={runCvAnalysis}
-            onPrepare={() => onAction("Open the candidate review desk and add the CV.")}
-          />
-          <WorkflowStartCard
-            icon={Database}
-            title="Analyze CRM"
-            description="Import open deals and find owner actions."
-            inputLabel="CRM export"
-            inputHint="CSV or pasted rows"
-            buttonLabel="Find actions"
-            runningLabel="Checking..."
-            isRunning={runningWorkflow === "crm"}
-            onOpen={() => setActiveView("crm")}
-            onRun={runCrmAnalysis}
-            onPrepare={() => onAction("Open CRM actions and import the deal export.")}
-          />
-          <WorkflowStartCard
-            icon={Target}
-            title="Qualify leads"
-            description="Score prospects against the ICP."
-            inputLabel="ICP + source"
-            inputHint="Company list or profile URLs"
-            buttonLabel="Score leads"
-            runningLabel="Scoring..."
-            isRunning={runningWorkflow === "prospects"}
-            onOpen={() => setActiveView("prospects")}
-            onRun={runProspectQualification}
-            onPrepare={() => onAction("Open lead capture and add the ICP and sources.")}
-          />
-        </aside>
-      </section>
 
-      <section className="dashboard-grid board-support-grid">
-        <Card>
-          <div className="card-header">
-            <div>
-              <p className="eyebrow">Pipeline snapshot</p>
-              <h3>Deals by stage</h3>
-            </div>
-            <LineChart size={20} aria-hidden="true" />
-          </div>
-          <div className="chart-wrap" aria-label="Deals by stage chart">
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={pipeline}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.grid} />
-                <XAxis dataKey="stage" tickLine={false} axisLine={false} fontSize={12} />
-                <YAxis tickLine={false} axisLine={false} fontSize={12} />
-                <Tooltip cursor={{ fill: chartColors.cursor }} />
-                <Bar dataKey="value" name="Active deals" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="stalled" name="Need action" fill={chartColors.secondary} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="workstream-list">
+            {workstreams.map((item) => (
+              <WorkstreamRow
+                key={item.title}
+                icon={item.icon}
+                title={item.title}
+                description={item.description}
+                result={item.result}
+                detail={item.detail}
+                badge={item.badge}
+                tone={item.tone}
+                action={item.action}
+                onOpen={() => setActiveView(item.view)}
+              />
+            ))}
           </div>
         </Card>
-        <Card>
+
+        <Card className="review-panel-card">
           <div className="card-header">
             <div>
-              <p className="eyebrow">Priority queue</p>
-              <h3>Review next</h3>
+              <p className="eyebrow">Reviews</p>
+              <h3>Latest output</h3>
             </div>
-            <Filter size={20} aria-hidden="true" />
+            <button className="text-button" type="button" onClick={() => setActiveView("logs")}>
+              View all
+            </button>
           </div>
-          <div className="queue-list">
+          <div className="queue-list compact-queue">
             {logs.length > 0 ? (
-              logs.slice(0, 4).map((log) => (
+              logs.slice(0, 3).map((log) => (
                 <button key={log.id} className="queue-item" type="button" onClick={() => setActiveView("logs")}>
                   <span className="queue-icon">
                     <ClipboardCheck size={16} aria-hidden="true" />
@@ -780,7 +638,7 @@ function CommandCenter({
                 </button>
               ))
             ) : (
-              <EmptyState title="Review queue is empty" description="The next completed workflow will appear here." />
+              <EmptyState title="No reviews yet" description="Completed analyses will appear here." />
             )}
           </div>
         </Card>
@@ -789,74 +647,47 @@ function CommandCenter({
   );
 }
 
-function WorkflowStartCard({
+function WorkstreamRow({
   icon: Icon,
   title,
   description,
-  inputLabel,
-  inputHint,
-  buttonLabel,
-  runningLabel,
-  isRunning,
+  result,
+  detail,
+  badge,
+  tone,
+  action,
   onOpen,
-  onRun,
-  onPrepare,
 }: {
   icon: typeof FileText;
   title: string;
   description: string;
-  inputLabel: string;
-  inputHint: string;
-  buttonLabel: string;
-  runningLabel: string;
-  isRunning: boolean;
+  result: string;
+  detail: string;
+  badge: number;
+  tone: Tone;
+  action: string;
   onOpen: () => void;
-  onRun: () => void;
-  onPrepare: () => void;
 }) {
   return (
-    <Card className="workflow-card">
-      <div className="workflow-card-top">
-        <div className="workflow-icon">
-          <Icon size={22} aria-hidden="true" />
-        </div>
-        <div>
+    <article className="workstream-row">
+      <div className="workflow-icon">
+        <Icon size={20} aria-hidden="true" />
+      </div>
+      <div className="workstream-copy">
+        <span>
           <h3>{title}</h3>
           <p>{description}</p>
-        </div>
-      </div>
-      <button
-        className="input-preview"
-        type="button"
-        onClick={() => {
-          onPrepare();
-          onOpen();
-        }}
-      >
-        <span className="input-preview-icon">
-          <UploadCloud size={24} aria-hidden="true" />
         </span>
-        <span className="input-preview-copy">
-          <strong>{inputLabel}</strong>
-          <small>{inputHint}</small>
-        </span>
-        <span className="input-preview-action">Add data</span>
-      </button>
-      <div className="button-row">
-        <Button
-          variant="secondary"
-          onClick={() => {
-            onPrepare();
-            onOpen();
-          }}
-        >
-          Open
-        </Button>
-        <Button onClick={onRun} disabled={isRunning}>
-          {isRunning ? runningLabel : buttonLabel}
-        </Button>
+        <small>{detail}</small>
       </div>
-    </Card>
+      <div className="workstream-meta">
+        <Badge tone={tone}>{badge}</Badge>
+        <small>{result}</small>
+      </div>
+      <Button variant="secondary" onClick={onOpen}>
+        {action}
+      </Button>
+    </article>
   );
 }
 
@@ -893,22 +724,15 @@ function CvTool({
 }) {
   return (
     <div className="content-stack">
-      <WorkflowSummary
-        title="CV Match & Dispatch"
-        status="Draft ready"
-        steps={["Add candidate", "Set target role", "Review recommendation"]}
-      />
       <section className="split-grid">
         <Card className="input-panel">
           <PanelTitle
-            eyebrow="Step 1"
             title="Candidate input"
             icon={UploadCloud}
-            helper="Upload a file or paste CV text before running analysis."
           />
           <FileDrop
-            label="Candidate CV"
-            helper="Upload a text CV or paste the CV below"
+            label="Attach CV file"
+            helper="Optional text, markdown, or CSV file"
             fileName={cvFileName}
             onFile={onCvFile}
             accept=".txt,.md,.csv"
@@ -928,10 +752,8 @@ function CvTool({
 
         <Card className="input-panel">
           <PanelTitle
-            eyebrow="Step 2"
             title="Job target"
             icon={BriefcaseBusiness}
-            helper="Define the role so the assistant can compare evidence, not guess."
           />
           <label className="field">
             <span>
@@ -1064,22 +886,15 @@ function CrmAnalyzer({
 }) {
   return (
     <div className="content-stack">
-      <WorkflowSummary
-        title="CRM Pipeline Optimizer"
-        status="CSV mapped"
-        steps={["Import CRM", "Confirm fields", "Review follow-ups"]}
-      />
       <section className="split-grid split-grid-narrow">
         <Card className="input-panel">
           <PanelTitle
-            eyebrow="Import"
-            title="CRM data source"
+            title="CRM data"
             icon={Database}
-            helper="Start with a CRM export, then confirm the fields to analyze."
           />
           <FileDrop
-            label="CRM export"
-            helper="HubSpot, Pipedrive, Salesforce, or Zoho CSV"
+            label="Attach CRM CSV"
+            helper="Optional CSV, TSV, or text file"
             fileName={crmFileName}
             onFile={onCrmFile}
             accept=".csv,.tsv,.txt"
@@ -1263,18 +1078,11 @@ function ProspectTool({
 }) {
   return (
     <div className="content-stack">
-      <WorkflowSummary
-        title="Prospect Qualification"
-        status="Sources ready"
-        steps={["Define ICP", "Import sources", "Approve capture"]}
-      />
       <section className="split-grid">
         <Card className="input-panel">
           <PanelTitle
-            eyebrow="ICP"
             title="Define target customer"
             icon={Target}
-            helper="Turn a broad prospect list into scored, review-ready leads."
           />
           <label className="field">
             <span>
@@ -1295,14 +1103,12 @@ function ProspectTool({
         </Card>
         <Card className="input-panel">
           <PanelTitle
-            eyebrow="Sources"
-            title="Import prospects"
+            title="Prospect source"
             icon={Users}
-            helper="Use a CSV, company list, or a manual company/profile URL."
           />
           <FileDrop
-            label="Prospect source"
-            helper="CSV, LinkedIn export, company list, or research notes"
+            label="Attach source file"
+            helper="Optional CSV, notes, or company list"
             fileName={prospectFileName}
             onFile={onProspectFile}
             accept=".csv,.txt,.md"
@@ -1649,43 +1455,11 @@ function SettingToggle({
   );
 }
 
-function WorkflowSummary({
-  title,
-  status,
-  steps,
-}: {
-  title: string;
-  status: string;
-  steps: string[];
-}) {
-  return (
-    <Card className="workflow-summary">
-      <div>
-        <p className="eyebrow">Workflow</p>
-        <h2>{title}</h2>
-        <p>{status}</p>
-      </div>
-      <div className="workflow-steps">
-        {steps.map((step, index) => (
-          <span key={step}>
-            <strong>{String(index + 1).padStart(2, "0")}</strong>
-            {step}
-          </span>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
 function PanelTitle({
-  eyebrow,
   title,
-  helper,
   icon: Icon,
 }: {
-  eyebrow: string;
   title: string;
-  helper: string;
   icon: typeof UploadCloud;
 }) {
   return (
@@ -1694,9 +1468,7 @@ function PanelTitle({
         <Icon size={20} aria-hidden="true" />
       </div>
       <div>
-        <p className="eyebrow">{eyebrow}</p>
         <h3>{title}</h3>
-        <p>{helper}</p>
       </div>
     </div>
   );
@@ -1716,11 +1488,15 @@ function FileDrop({
   accept: string;
 }) {
   return (
-    <label className="file-drop">
-      <UploadCloud size={24} aria-hidden="true" />
+    <label className="file-picker">
       <span>
         <strong>{label}</strong>
         <small>{helper}</small>
+      </span>
+      <em>{fileName || "No file attached"}</em>
+      <span className="file-picker-action">
+        <UploadCloud size={16} aria-hidden="true" />
+        Browse
       </span>
       <input
         type="file"
@@ -1730,7 +1506,6 @@ function FileDrop({
           if (file) void onFile(file);
         }}
       />
-      <em>{fileName || "No file selected"}</em>
     </label>
   );
 }
