@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -1383,7 +1383,6 @@ function FileDrop({
   helper,
   fileName,
   onFile,
-  accept,
 }: {
   label: string;
   helper: string;
@@ -1391,19 +1390,7 @@ function FileDrop({
   onFile: (file: File) => Promise<void>;
   accept: string;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-
-  function openPicker() {
-    if (!inputRef.current) return;
-    inputRef.current.value = "";
-    inputRef.current.click();
-  }
-
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) void onFile(file);
-  }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -1428,18 +1415,10 @@ function FileDrop({
         <small>{helper}</small>
       </span>
       <em>{fileName || "No file attached"}</em>
-      <button className="file-picker-action" type="button" onClick={openPicker}>
+      <span className="file-picker-action">
         <UploadCloud size={16} aria-hidden="true" />
-        Browse file
-      </button>
-      <input
-        ref={inputRef}
-        className="file-picker-input"
-        type="file"
-        accept={accept}
-        tabIndex={-1}
-        onChange={handleFileChange}
-      />
+        Drop file
+      </span>
     </div>
   );
 }

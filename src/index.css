@@ -947,11 +947,6 @@ textarea:focus-visible {
   background: #fbfcf7;
 }
 
-.file-picker:focus-visible {
-  outline: 3px solid rgba(37, 95, 77, 0.14);
-  outline-offset: 2px;
-}
-
 .file-picker strong,
 .file-picker small,
 .file-picker em {
@@ -969,20 +964,7 @@ textarea:focus-visible {
   font-weight: 650;
 }
 
-.file-picker-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-}
-
 .file-picker-action {
-  appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -992,22 +974,9 @@ textarea:focus-visible {
   background: var(--surface-soft);
   color: var(--blue);
   padding: 0 10px;
-  font-family: inherit;
   font-size: 12px;
   font-weight: 850;
-  cursor: pointer;
   white-space: nowrap;
-}
-
-.file-picker-action:hover,
-.file-picker-action:focus-visible {
-  border-color: rgba(37, 95, 77, 0.38);
-  background: #ffffff;
-}
-
-.file-picker-action:focus-visible {
-  outline: 3px solid rgba(37, 95, 77, 0.14);
-  outline-offset: 2px;
 }
 
 .file-picker em {
